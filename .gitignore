@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+
+# build outputs
+dist/
+release/
+.next/
+renderer/.next/
+out/
+renderer/out/
+*.tsbuildinfo
+
+# env (키는 어차피 런타임 입력이지만, 로컬 설정 유출 방지)
+.env
+.env.*
+!.env.example
+
+# local data (로컬 SQLite 기억 — R6: 절대 커밋 금지)
+*.db
+*.db-wal
+*.db-shm
+
+# logs
+*.log
+
+# 임시·산출물 폴더
+.tmp-prebuild-test/
+.tmp-*/
+
+# 로컬 개발 도구 설정
+.claude/settings.local.json
+.vscode/
+.idea/
+
+# OS 부산물
+.DS_Store
+Thumbs.db
+desktop.ini

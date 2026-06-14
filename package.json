@@ -1,0 +1,49 @@
+{
+  "name": "ai-visor",
+  "version": "0.1.0",
+  "description": "감정(VAD)을 읽고 기억을 쌓으며 대화하는 로컬 우선 데스크톱 AI 동반자",
+  "author": "mingy",
+  "private": true,
+  "main": "dist/electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:renderer": "npm --prefix renderer run dev",
+    "dev:electron": "wait-on http://localhost:3000 && npm run build:electron && electron . --remote-debugging-port=9223",
+    "build": "npm run build:renderer && npm run build:electron",
+    "build:renderer": "npm --prefix renderer run build",
+    "build:electron": "tsc -p electron",
+    "typecheck": "tsc -p electron --noEmit && npm --prefix renderer run typecheck",
+    "lint": "eslint electron && npm --prefix renderer run lint",
+    "package": "npm run build && electron-builder --win"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.9",
+    "concurrently": "^9.2.1",
+    "electron": "^38.4.1",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.39.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "wait-on": "^9.0.1"
+  },
+  "build": {
+    "appId": "com.aivisor.companion",
+    "productName": "AI Visor",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/electron/**/*",
+      "renderer/out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
