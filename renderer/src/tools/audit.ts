@@ -78,7 +78,9 @@ export function createAuditLog(writer: AuditWriter): AuditLog {
           entry.risk,
           summarizeInput(entry.input),
           entry.isSuccess ? 1 : 0,
-          entry.rollbackInfo ?? null,
+          // 롤백 정보도 시크릿 가림·길이 제한을 거친다 — 이전 클립보드 등 민감 값이
+          // 평문으로 감사 로그에 남지 않게 (입력·출력과 동일한 보호)
+          entry.rollbackInfo !== undefined ? truncateSummary(entry.rollbackInfo) : null,
           truncateSummary(entry.outputSummary),
           now,
         ])

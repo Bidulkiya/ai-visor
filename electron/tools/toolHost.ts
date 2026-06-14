@@ -8,11 +8,15 @@
 
 import { ipcMain, net, shell } from 'electron'
 import { spawn } from 'node:child_process'
-import { existsSync, lstatSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { IPC_CHANNELS, type ToolOperationName, type ToolOperationResult } from '../ipc/channels'
-import { isSensitivePath } from '../security/sensitivePaths'
+import { failure, requireStringField, validateExistingPath, type ToolOperation } from './opHelpers'
+import { buildFileOperations } from './fileOps'
+import { buildWebOperations } from './webOps'
+import { buildSystemOperations } from './systemOps'
+import { buildProcessOperations } from './processOps'
+import { buildInteractionOperations } from './interactionOps'
 
 /** 파일 읽기 상한 — LLM 컨텍스트 보호 */
 const READ_FILE_MAX_CHARS = 20000
@@ -34,41 +38,6 @@ const FORBIDDEN_EXECUTABLE_NAMES: readonly string[] = [
   'rundll32.exe',
 ]
 
-function failure(output: string): ToolOperationResult {
-  return { isSuccess: false, output }
-}
-
-function requireStringField(
-  input: Record<string, unknown>,
-  fieldName: string,
-): string | null {
-  const value = input[fieldName]
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    return null
-  }
-  return value.trim()
-}
-
-/**
- * 파일 도구의 공통 경로 가드: 절대경로 + 존재 + 심볼릭 링크 차단 + 민감 위치 차단.
- * 심볼릭 링크는 검사를 우회해 보호 경로로 새는 통로이므로 lstat로 거부한다.
- */
-function validateFilePath(filePath: string): { ok: true; resolved: string } | { ok: false; reason: string } {
-  if (!path.isAbsolute(filePath)) {
-    return { ok: false, reason: '절대 경로만 허용됩니다.' }
-  }
-  const resolved = path.normalize(filePath)
-  if (!existsSync(resolved)) {
-    return { ok: false, reason: `경로가 없습니다: ${resolved}` }
-  }
-  if (lstatSync(resolved).isSymbolicLink()) {
-    return { ok: false, reason: '심볼릭 링크는 허용되지 않습니다.' }
-  }
-  if (isSensitivePath(resolved)) {
-    return { ok: false, reason: '보호된 시스템·자격증명 경로에는 접근할 수 없습니다.' }
-  }
-  return { ok: true, resolved }
-}
 
 async function searchWeb(input: Record<string, unknown>): Promise<ToolOperationResult> {
   const query = requireStringField(input, 'query')
@@ -109,7 +78,7 @@ async function readFileOperation(input: Record<string, unknown>): Promise<ToolOp
   if (filePath === null) {
     return failure('파일 경로(path)가 비어 있습니다.')
   }
-  const validation = validateFilePath(filePath)
+  const validation = validateExistingPath(filePath)
   if (!validation.ok) {
     return failure(validation.reason)
   }
@@ -128,7 +97,7 @@ async function openApp(input: Record<string, unknown>): Promise<ToolOperationRes
   if (appPath === null) {
     return failure('실행할 경로(path)가 비어 있습니다.')
   }
-  const validation = validateFilePath(appPath)
+  const validation = validateExistingPath(appPath)
   if (!validation.ok) {
     return failure(validation.reason)
   }
@@ -206,7 +175,7 @@ async function deleteFile(input: Record<string, unknown>): Promise<ToolOperation
   if (filePath === null) {
     return failure('삭제할 경로(path)가 비어 있습니다.')
   }
-  const validation = validateFilePath(filePath)
+  const validation = validateExistingPath(filePath)
   if (!validation.ok) {
     return failure(validation.reason)
   }
@@ -226,14 +195,18 @@ async function deleteFile(input: Record<string, unknown>): Promise<ToolOperation
   }
 }
 
-const OPERATIONS: Record<
-  ToolOperationName,
-  (input: Record<string, unknown>) => Promise<ToolOperationResult>
-> = {
+// 기존 4종 + 카테고리 모듈(파일·웹·시스템·프로세스·상호작용)을 한 맵으로 합친다.
+// 각 모듈은 자기 카테고리의 작업만 알고, 게이트·감사는 렌더러가 담당한다(R4).
+const OPERATIONS: Record<ToolOperationName, ToolOperation> = {
   search_web: searchWeb,
   read_file: readFileOperation,
   open_app: openApp,
   delete_file: deleteFile,
+  ...buildFileOperations(),
+  ...buildWebOperations(),
+  ...buildSystemOperations(),
+  ...buildProcessOperations(),
+  ...buildInteractionOperations(),
 }
 
 export function registerToolHost(): void {

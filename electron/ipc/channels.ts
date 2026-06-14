@@ -49,7 +49,36 @@ export type SqlParameters = ReadonlyArray<SqlParameter>
  * 도구 작업 와이어 타입 — renderer/src/tools/builtins.ts와 거울 동기.
  * 작업 이름은 도구 이름과 1:1이다.
  */
-export type ToolOperationName = 'search_web' | 'read_file' | 'open_app' | 'delete_file'
+export type ToolOperationName =
+  // 기존 4종
+  | 'search_web'
+  | 'read_file'
+  | 'open_app'
+  | 'delete_file'
+  // 파일·폴더 (+1 확장)
+  | 'write_file'
+  | 'move_file'
+  | 'copy_file'
+  | 'list_directory'
+  | 'create_folder'
+  | 'search_files'
+  | 'get_file_info'
+  | 'compress'
+  | 'extract'
+  // 웹
+  | 'web_fetch'
+  // 시스템 정보
+  | 'system_status'
+  | 'get_clipboard'
+  | 'set_clipboard'
+  | 'list_processes'
+  // 상호작용
+  | 'send_notification'
+  | 'schedule_reminder'
+  | 'open_url'
+  | 'take_screenshot'
+  // 프로세스
+  | 'kill_process'
 
 export interface ToolOperationResult {
   isSuccess: boolean
