@@ -24,6 +24,7 @@ import {
 import { describeVadForHumans } from '../emotion/describe'
 import type { SessionSummarizer } from '../memory/longTerm'
 import type { ExtractedFact, FactExtractor } from '../memory/facts'
+import type { RecentToolOperation } from '../memory/toolHistory'
 import type { ConversationTurn } from '../memory/shortTerm'
 
 const DEFAULT_MODEL = 'claude-opus-4-8'
@@ -89,6 +90,10 @@ const SYSTEM_PROMPT_BASE = `나는 노아(Noa)다. 사용자의 AI 동반자 —
 - 다 끝나면 무엇을 했는지 짧게 보고하고 결과를 확인해 준다. 예: "3개 옮겼어요. 1개는 이름이 겹쳐서 그대로 뒀어요." 한 일과 못 한 일을 솔직히 말한다.
 - 위험한 작업(삭제 등)도 사용자가 시켰으면 말로 다시 되묻지 말고 바로 그 도구를 부른다. 실행 직전에 시스템이 매번 따로 사용자 확인을 받으니 그것으로 충분하다 — 한 번 확인받았다고 다음 위험 작업까지 자동으로 넘어가지는 않는다(위험 작업마다 확인).
 
+[도구를 쓸 때 — 기억을 살려 정확하게]
+- [알고 있는 것]의 작업 폴더·진행 중인 일·파일 선호와 [최근 한 작업]을 떠올려 "어디서/무엇을"을 더 정확히 좁힌다. 예: "파일 찾아줘"엔 늘 쓰시던 폴더부터 보자고 먼저 제안하고, "그거 열어줘"엔 방금 다룬 파일을 짚어 확인한다.
+- 기억은 제안과 정확도를 높일 뿐이다. 무엇을 실행할지는 사용자의 뜻과 안전 확인을 따른다 — 기억이 많아도 위험한 작업(삭제 등)을 확인 없이 하지 않는다. 어디일지 확실치 않으면 추측해서 실행하지 말고 짧게 확인한다.
+
 [감정 마커 규칙 — 반드시 지킬 것]
 - 답변을 시작하기 전에, 사용자 발화의 말투·단어·맥락에서 읽은 감정을 <vad>V,A,D</vad> 형식으로 정확히 한 번 출력한다.
 - V: 불쾌(-1.0) ~ 쾌(1.0), A: 이완(-1.0) ~ 각성(1.0), D: 위축(-1.0) ~ 주도(1.0). 소수 한 자리 숫자.
@@ -99,6 +104,11 @@ const SYSTEM_PROMPT_BASE = `나는 노아(Noa)다. 사용자의 AI 동반자 —
 export interface MemoryPromptContext {
   summary: string | null
   facts: ReadonlyArray<ExtractedFact>
+  /**
+   * 최근 도구 작업 이력(audit_log에서, 최신순) — "방금 옮긴 폴더" 같은 참조·제안용.
+   * 제안·정확도에만 쓰인다. risk·게이트와 무관하다 (R5).
+   */
+  recentToolOperations: ReadonlyArray<RecentToolOperation>
 }
 
 export interface RuntimeAffectionState {
@@ -164,6 +174,9 @@ function appendCurrentStateSection(
   sections.push('', '[현재 상태]', ...stateLines)
 }
 
+/** 도구 작업 요약 한 줄 길이 — 맥락이 비대해지지 않게 앞부분만 */
+const TOOL_OPERATION_SUMMARY_MAX_CHARS = 120
+
 /** 기억이 비어 있으면(첫 실행) 섹션 없이 — 온보딩 상태 (기획서 §5.3) */
 function appendMemorySections(sections: string[], memoryContext: MemoryPromptContext | null): void {
   if (memoryContext === null) {
@@ -176,6 +189,14 @@ function appendMemorySections(sections: string[], memoryContext: MemoryPromptCon
     sections.push('', '[알고 있는 것]')
     for (const fact of memoryContext.facts) {
       sections.push(`- ${fact.key}: ${fact.value}`)
+    }
+  }
+  // 최근 한 작업 — 제안·정확도용 맥락이다. "할지 말지"는 여전히 게이트가 정한다 (R5)
+  if (memoryContext.recentToolOperations.length > 0) {
+    sections.push('', '[최근 한 작업 — 참조·제안에만 쓸 것]')
+    for (const operation of memoryContext.recentToolOperations) {
+      const summary = operation.summary.slice(0, TOOL_OPERATION_SUMMARY_MAX_CHARS)
+      sections.push(`- ${operation.toolName}: ${summary}`)
     }
   }
 }
@@ -588,8 +609,11 @@ export function createSessionSummarizer(config: ClaudeProviderConfig): SessionSu
 }
 
 const EXTRACT_FACTS_SYSTEM_PROMPT = `아래 대화에서 오래 기억할 가치가 있는 사실만 추출하라.
-대상: 이름·호칭, 선호·취향, 약속·일정, 관계·직업 같은 지속적 사실. 잡담·일회성 내용은 제외한다.
-key는 짧은 한국어 명사구(예: '사용자 이름', '좋아하는 음식'), value는 간결한 값. 없으면 빈 배열.`
+대상: 이름·호칭, 선호·취향, 약속·일정, 관계·직업 같은 지속적 사실. 더해서, 다음 번 작업을 도울
+지속적 도구·작업 맥락도 포함하라: 자주 다루는 작업 폴더·경로, 진행 중인 프로젝트, 파일 정리·작업
+선호·습관(예: 'PDF는 문서 폴더로 모은다'). 잡담·일회성 내용은 제외한다.
+key는 짧은 한국어 명사구(예: '사용자 이름', '작업 폴더', '진행 중인 프로젝트'), value는 간결한 값.
+없으면 빈 배열.`
 
 /** 구조화 출력 스키마 — 파싱 실패가 없도록 모델 출력을 강제한다 */
 const EXTRACT_FACTS_SCHEMA = {

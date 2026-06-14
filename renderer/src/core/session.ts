@@ -47,6 +47,7 @@ import {
   type StartupContext,
 } from '../memory/longTerm'
 import { createFactStore, type FactExtractor, type FactStore } from '../memory/facts'
+import { createToolHistoryReader, type ToolHistoryReader } from '../memory/toolHistory'
 import { createIpcSqliteDriver, type DatabaseBridge } from '../memory/ipcDriver'
 
 export type SendMessageResult =
@@ -95,6 +96,7 @@ export function createCompanionSession(options: CompanionSessionOptions): Compan
   let database: MemoryDatabase | null = null
   let longTerm: LongTermMemory | null = null
   let factStore: FactStore | null = null
+  let toolHistory: ToolHistoryReader | null = null
   let currentEmotion: VadState = NEUTRAL_VAD
   let isShutdownCompleted = false
   /** 진행 중인 턴 — shutdown이 영속 전에 정착을 기다리기 위해 추적한다 */
@@ -112,15 +114,24 @@ export function createCompanionSession(options: CompanionSessionOptions): Compan
     }
   })
 
+  /** 도구 맥락에 줄 최근 작업 건수 — 너무 많으면 프롬프트가 비대해진다 */
+  const RECENT_TOOL_OPERATIONS_LIMIT = 6
+
   async function loadMemoryContext(): Promise<MemoryPromptContext> {
     if (longTerm === null || factStore === null) {
-      return { summary: null, facts: [] }
+      return { summary: null, facts: [], recentToolOperations: [] }
     }
-    const [startupContext, facts] = await Promise.all([
+    // 도구 이력은 보조 맥락 — 없거나 실패해도(reader null·빈 로그) 기억은 정상 로드된다
+    const recentOperationsPromise =
+      toolHistory !== null
+        ? toolHistory.getRecentOperations(RECENT_TOOL_OPERATIONS_LIMIT)
+        : Promise.resolve([])
+    const [startupContext, facts, recentToolOperations] = await Promise.all([
       longTerm.loadStartupContext(),
       factStore.getAllFacts(),
+      recentOperationsPromise,
     ])
-    return { summary: startupContext.latestSummary, facts }
+    return { summary: startupContext.latestSummary, facts, recentToolOperations }
   }
 
   /**
@@ -189,6 +200,7 @@ export function createCompanionSession(options: CompanionSessionOptions): Compan
       database = await openMemoryDatabase(options.driver)
       longTerm = createLongTermMemory(database, summarize)
       factStore = createFactStore(database)
+      toolHistory = createToolHistoryReader(database)
       engine = createConversationEngine(llmProvider, outputStream, { shortTerm, longTerm })
       currentEmotion = await longTerm.loadEmotionState()
       // 유대도: 영속값 이어받기 + 턴 단위 갱신 구독 (어투에만 반영 — R5)

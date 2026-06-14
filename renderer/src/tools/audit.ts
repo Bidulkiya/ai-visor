@@ -7,6 +7,7 @@
  */
 
 import type { RiskLevel } from './registry'
+import { redactSecrets } from '../shared/redact'
 
 /** memory/db.ts의 MemoryDatabase.write와 구조 호환 — import 없이 주입 */
 export interface AuditWriter {
@@ -34,24 +35,9 @@ export interface AuditLog {
 /** 컬럼 폭주 방지 — 인자·결과는 요약으로만 저장 */
 const SUMMARY_MAX_CHARS = 500
 
-/** 입력·출력에서 명백한 시크릿 패턴을 가린다 (R7 방어 — 프롬프트 인젝션 등 대비) */
-const SECRET_PATTERNS: ReadonlyArray<RegExp> = [
-  /sk-ant-[A-Za-z0-9_-]+/g,
-  /sk-[A-Za-z0-9_-]{16,}/g,
-  /(api[_-]?key|token|password|secret)\s*[=:]\s*\S+/gi,
-]
-const REDACTED_PLACEHOLDER = '[가림]'
-
 const INSERT_AUDIT_SQL = `INSERT INTO audit_log
   (tool_name, risk, input_summary, is_success, rollback_info, output_summary, created_at)
   VALUES (?, ?, ?, ?, ?, ?, ?)`
-
-function redactSecrets(text: string): string {
-  return SECRET_PATTERNS.reduce(
-    (current, pattern) => current.replace(pattern, REDACTED_PLACEHOLDER),
-    text,
-  )
-}
 
 function truncateSummary(text: string): string {
   const redacted = redactSecrets(text)

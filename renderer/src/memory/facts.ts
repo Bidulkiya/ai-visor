@@ -9,6 +9,7 @@
 
 import type { MemoryDatabase } from './db'
 import type { ConversationTurn } from './shortTerm'
+import { redactSecrets } from '../shared/redact'
 
 export const MAX_FACT_KEY_LENGTH = 64
 export const MAX_FACT_VALUE_LENGTH = 500
@@ -44,10 +45,14 @@ interface FactRow {
   value: string
 }
 
-/** 공백 정리 + 빈 값/과길이 거부. 유효하지 않으면 null */
+/**
+ * 공백 정리 + 시크릿 가림 + 빈 값/과길이 거부. 유효하지 않으면 null.
+ * 추출기가 실수로 키·토큰을 사실로 뽑아도 평문으로 영속·주입되지 않게 가린다
+ * (도구 이력과 같은 redact 정책 — 경로 등 일반 값은 그대로 통과). 가림 후 길이를 잰다.
+ */
 function normalizeFact(fact: ExtractedFact): ExtractedFact | null {
-  const key = fact.key.trim()
-  const value = fact.value.trim()
+  const key = redactSecrets(fact.key.trim())
+  const value = redactSecrets(fact.value.trim())
   if (key.length === 0 || value.length === 0) {
     return null
   }
