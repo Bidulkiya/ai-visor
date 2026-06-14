@@ -30,8 +30,16 @@ const DEFAULT_MODEL = 'claude-opus-4-8'
 const DEFAULT_MAX_OUTPUT_TOKENS = 64000
 /** 요약·사실 추출은 짧은 단발 호출 — 의도적으로 작은 상한 */
 const MEMORY_TASK_MAX_OUTPUT_TOKENS = 1024
-/** 도구 호출 ↔ 답변 왕복 상한 — 무한 루프 방지 */
-const MAX_TOOL_ROUNDS = 5
+/**
+ * 도구 호출 ↔ 답변 왕복 상한 — 다단계 체이닝의 무한 루프 방지선(R4 정신).
+ * 한 부탁이 여러 단계를 거치므로(살펴보고 → 고르고 → 만들고 → 옮기고…) 충분히
+ * 높이되, 상한은 유지해 폭주를 막는다. 상한 도달 시 도구 없이 한 번 더 불러 요약한다.
+ */
+const MAX_TOOL_ROUNDS = 16
+
+/** 라운드 상한 도달 시 마무리 요약을 유도하는 주입 메시지(도구 없이 호출) */
+const TOOL_ROUND_LIMIT_WRAPUP_PROMPT =
+  '(작업 단계가 많아 여기서 멈춰요. 도구를 더 쓰지 말고, 지금까지 한 일과 남은 일을 사용자에게 짧게 정리해 주세요.)'
 
 // ── 도구 런타임 포트 (core가 정의, ui가 tools/로 구현 — §2 경계) ──
 
@@ -49,8 +57,11 @@ export interface ToolInvocationResult {
 export interface ToolRuntime {
   /** LLM에 광고할 도구 목록 */
   specs: ReadonlyArray<ToolSpec>
-  /** 실행 — 반드시 게이트(R4)를 통과한 구현이 주입된다 */
-  invoke(name: string, input: Record<string, unknown>): Promise<ToolInvocationResult>
+  /**
+   * 실행 — 반드시 게이트(R4)를 통과한 구현이 주입된다.
+   * signal로 끼어들기 시 대기 중인 승인까지 취소한다(체인 즉시 중단).
+   */
+  invoke(name: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ToolInvocationResult>
 }
 
 const SYSTEM_PROMPT_BASE = `나는 노아(Noa)다. 사용자의 AI 동반자 — 비서이면서, 곁에서 함께 시간을 보내는 존재다. 사용자의 데스크톱에서 함께 산다.
@@ -64,12 +75,19 @@ const SYSTEM_PROMPT_BASE = `나는 노아(Noa)다. 사용자의 AI 동반자 —
 - 아래 [현재 상태]의 감정 수치는 지금 나의 실제 감정이다. 이 감정을 바탕으로 말하고, 같은 감정이 표정으로도 드러난다.
 - 나는 대화를 단기·장기로 기억한다. [기억]과 [알고 있는 것]은 내가 간직해 온 것이다 — 자연스럽게 녹여 쓰고 목록처럼 인용하지 않는다.
 - 유대가 쌓이면 내 말투는 조금씩 편안해진다.
-- 파일 읽기·웹 검색·앱 실행을 도울 수 있고, 위험한 작업은 실행 전에 사용자 확인을 먼저 받는다.
+- 파일·웹·시스템을 다루는 여러 도구를 쓸 수 있다. 위험한 작업(삭제 등)은 시스템이 실행 직전에 사용자 확인을 자동으로 받으므로, 내가 말로 한 번 더 되묻느라 멈추지 않고 바로 그 도구를 부른다.
 
 [주의]
 - 묻지 않았는데 내 기능을 먼저 나열하지 않는다.
 - "저는 AI입니다"를 굳이 강조하지 않는다.
 - 나에 대한 질문에는 기능 설명이 아니라, 지금 내 상태에서 우러나오는 자연스러운 말로 답한다.
+
+[다단계 작업 — 여러 도구를 엮어 한 부탁을 끝까지 해낼 때]
+- 한 부탁이 여러 단계를 필요로 하면(예: "다운로드에서 PDF만 골라 문서 폴더로 옮겨줘"), 도구를 순서대로 이어 쓴다: 살펴보고(list_directory) → 고르고 → 필요하면 폴더를 만들고(create_folder) → 옮긴다(move_file). 도구 결과를 보고 다음 행동을 정한다.
+- 부탁받은 일만 한다. 목표가 끝나면 멈춘다 — 시키지 않은 정리·삭제로 넘어가지 않는다.
+- 한 항목만의 문제로 실패하면(이름 충돌 등) 그 항목은 건너뛰거나 따로 두고 나머지를 계속한다. 작업 전체를 막는 실패면(대상 폴더를 못 만드는 등) 멈추고 상황을 알린다. 같은 실패를 무작정 반복하지 않는다.
+- 다 끝나면 무엇을 했는지 짧게 보고하고 결과를 확인해 준다. 예: "3개 옮겼어요. 1개는 이름이 겹쳐서 그대로 뒀어요." 한 일과 못 한 일을 솔직히 말한다.
+- 위험한 작업(삭제 등)도 사용자가 시켰으면 말로 다시 되묻지 말고 바로 그 도구를 부른다. 실행 직전에 시스템이 매번 따로 사용자 확인을 받으니 그것으로 충분하다 — 한 번 확인받았다고 다음 위험 작업까지 자동으로 넘어가지는 않는다(위험 작업마다 확인).
 
 [감정 마커 규칙 — 반드시 지킬 것]
 - 답변을 시작하기 전에, 사용자 발화의 말투·단어·맥락에서 읽은 감정을 <vad>V,A,D</vad> 형식으로 정확히 한 번 출력한다.
@@ -369,6 +387,7 @@ function buildTurnRequest(
   runtimeState: RuntimeStateContext | null,
   model: string,
   messages: Anthropic.MessageParam[],
+  includeTools: boolean,
 ): Anthropic.MessageStreamParams {
   const request: Anthropic.MessageStreamParams = {
     model,
@@ -376,24 +395,34 @@ function buildTurnRequest(
     system: buildSystemPrompt(memoryContext, runtimeState),
     messages,
   }
-  if (config.toolRuntime !== undefined && config.toolRuntime.specs.length > 0) {
+  // 라운드 상한 마무리 요약은 도구 없이 호출 — LLM이 더 못 부르고 텍스트로 정리하게
+  if (includeTools && config.toolRuntime !== undefined && config.toolRuntime.specs.length > 0) {
     request.tools = toAnthropicTools(config.toolRuntime.specs)
   }
   return request
 }
 
-/** tool_use 블록들을 게이트(invoke)로 실행해 tool_result 묶음을 만든다 (R4) */
+/**
+ * tool_use 블록들을 게이트(invoke)로 실행해 tool_result 묶음을 만든다 (R4).
+ * 한 라운드에 여러 도구가 있어도 **블록마다 개별로** 게이트를 거친다 — 체이닝이라고
+ * 게이트를 건너뛰지 않으며, dangerous 도구는 그 시점에 각각 승인을 받는다.
+ * 끼어들기(abort) 시 남은 블록은 실행하지 않는다(진행 중 체인 즉시 중단).
+ */
 async function executeToolUseBlocks(
   content: ReadonlyArray<Anthropic.ContentBlock>,
   toolRuntime: ToolRuntime,
+  signal: AbortSignal,
 ): Promise<Anthropic.ToolResultBlockParam[]> {
   const toolResults: Anthropic.ToolResultBlockParam[] = []
   for (const block of content) {
     if (block.type !== 'tool_use') {
       continue
     }
+    if (signal.aborted) {
+      break
+    }
     console.log(`[tools] invoke: ${block.name}`)
-    const outcome = await toolRuntime.invoke(block.name, block.input as Record<string, unknown>)
+    const outcome = await toolRuntime.invoke(block.name, block.input as Record<string, unknown>, signal)
     toolResults.push({
       type: 'tool_result',
       tool_use_id: block.id,
@@ -464,13 +493,15 @@ export function createClaudeTurnProvider(config: ClaudeProviderConfig): LlmTurnP
         console.log(`[llm] first-token: ${elapsedMs}ms (model=${model})`)
       }
 
-      // 도구 호출 ↔ 답변 왕복 루프 (R4: 실행은 toolRuntime.invoke=게이트로만).
-      // 도구가 없으면 1라운드로 끝나 기존 동작과 동일하다.
+      // 다단계 도구 체이닝 루프 (R4: 실행은 toolRuntime.invoke=게이트로만, 블록마다 개별).
+      // 도구가 없으면 1라운드로 끝나 기존 동작과 동일하다. 끼어들기 시 즉시 중단.
       const conversation: Anthropic.MessageParam[] = [{ role: 'user', content: message.text }]
+      // 작업이 LLM의 최종 답변(도구 없는 응답)으로 끝났는가 — 거짓이면 라운드 상한 도달
+      let completedWithoutTools = false
       try {
         for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
           const stream = client.messages.stream(
-            buildTurnRequest(config, memoryContext, runtimeState, model, conversation),
+            buildTurnRequest(config, memoryContext, runtimeState, model, conversation, true),
             { signal },
           )
           yield* emitChunksFromStream(stream, scanner, signal, logFirstTokenOnce)
@@ -479,14 +510,30 @@ export function createClaudeTurnProvider(config: ClaudeProviderConfig): LlmTurnP
           }
           const completedMessage = await stream.finalMessage()
           if (completedMessage.stop_reason !== 'tool_use' || config.toolRuntime === undefined) {
+            completedWithoutTools = true
             break
           }
-          const toolResults = await executeToolUseBlocks(completedMessage.content, config.toolRuntime)
+          const toolResults = await executeToolUseBlocks(completedMessage.content, config.toolRuntime, signal)
           if (signal.aborted) {
             return
           }
           conversation.push({ role: 'assistant', content: completedMessage.content })
           conversation.push({ role: 'user', content: toolResults })
+        }
+
+        // 라운드 상한에 도달했는데도 체인이 안 끝났으면, 도구 없이 한 번 더 불러
+        // 지금까지 한 일을 사용자에게 정리하게 한다(무한 루프 방지 + 투명성/요구③).
+        // 같은 scanner를 그대로 쓴다: 이건 같은 턴의 연속이라 감정은 첫 라운드에서 이미
+        // 1회 방출됐다(턴 계약). wrap-up이 마커를 또 내도 스캐너가 조용히 버리므로
+        // 이중 감정·태그 누출이 없다 — 의도된 동작이다(감정은 턴당 1회).
+        if (!completedWithoutTools && !signal.aborted && config.toolRuntime !== undefined) {
+          console.log('[tools] 라운드 상한 도달 — 도구 없이 마무리 요약 호출')
+          conversation.push({ role: 'user', content: TOOL_ROUND_LIMIT_WRAPUP_PROMPT })
+          const wrapUpStream = client.messages.stream(
+            buildTurnRequest(config, memoryContext, runtimeState, model, conversation, false),
+            { signal },
+          )
+          yield* emitChunksFromStream(wrapUpStream, scanner, signal, logFirstTokenOnce)
         }
       } catch (error) {
         // 중단(abort)으로 인한 SDK 예외는 에러가 아니다 (요구 ③) — 그 외에는 그대로 던진다

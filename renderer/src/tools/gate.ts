@@ -13,8 +13,11 @@
 import type { AuditLog } from './audit'
 import type { ToolDefinition, ToolExecutionResult, ToolRegistry } from './registry'
 
-/** dangerous 도구 실행 전 ui에 승인을 묻는다. 거부=false. 미주입 시 게이트는 기본 거부 */
-export type ApprovalRequester = (request: ApprovalRequest) => Promise<boolean>
+/**
+ * dangerous 도구 실행 전 ui에 승인을 묻는다. 거부=false. 미주입 시 게이트는 기본 거부.
+ * signal이 주어지면 끼어들기(abort) 시 대기 중인 승인이 자동 거부돼야 한다.
+ */
+export type ApprovalRequester = (request: ApprovalRequest, signal?: AbortSignal) => Promise<boolean>
 
 export interface ApprovalRequest {
   toolName: string
@@ -28,14 +31,21 @@ export type GateOutcome =
   | { status: 'unknown-tool'; reason: string }
 
 export interface ToolGate {
-  /** 도구 실행의 유일한 진입점 */
-  invoke(toolName: string, input: Record<string, unknown>): Promise<GateOutcome>
+  /** 도구 실행의 유일한 진입점. signal로 끼어들기 시 대기 중 승인까지 취소한다 */
+  invoke(toolName: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<GateOutcome>
 }
 
 const DENY_MESSAGE_NO_APPROVER =
   '위험 작업 승인 통로가 없어 거부했습니다. (승인 UI 미연결)'
 const DENY_MESSAGE_USER =
   '사용자가 승인하지 않아 실행하지 않았습니다.'
+const DENY_MESSAGE_INTERRUPTED =
+  '끼어들기로 중단되어 실행하지 않았습니다.'
+
+/** 함수로 감싸 await 전후의 좁힘을 끊는다 — signal.aborted는 도중에 바뀔 수 있다 */
+function isAborted(signal?: AbortSignal): boolean {
+  return signal?.aborted === true
+}
 
 export interface ToolGateOptions {
   registry: ToolRegistry
@@ -86,6 +96,7 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
   async function invoke(
     toolName: string,
     input: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<GateOutcome> {
     const tool = registry.get(toolName)
     if (tool === null) {
@@ -102,14 +113,20 @@ export function createToolGate(options: ToolGateOptions): ToolGate {
       await recordDenial(tool, input, auditLog, DENY_MESSAGE_NO_APPROVER)
       return { status: 'denied', reason: DENY_MESSAGE_NO_APPROVER }
     }
-    const isApproved = await options.requestApproval({
-      toolName: tool.name,
-      description: tool.description,
-      input,
-    })
+    // 이미 끼어들기로 중단됐으면 승인을 묻지 않고 거부 — 멈춘 체인이 위험 작업을 띄우지 않게
+    if (isAborted(signal)) {
+      await recordDenial(tool, input, auditLog, DENY_MESSAGE_INTERRUPTED)
+      return { status: 'denied', reason: DENY_MESSAGE_INTERRUPTED }
+    }
+    // 승인 대기 중 끼어들면 자동 거부된다 (signal 전달 — useToolApproval이 처리)
+    const isApproved = await options.requestApproval(
+      { toolName: tool.name, description: tool.description, input },
+      signal,
+    )
     if (!isApproved) {
-      await recordDenial(tool, input, auditLog, DENY_MESSAGE_USER)
-      return { status: 'denied', reason: DENY_MESSAGE_USER }
+      const reason = isAborted(signal) ? DENY_MESSAGE_INTERRUPTED : DENY_MESSAGE_USER
+      await recordDenial(tool, input, auditLog, reason)
+      return { status: 'denied', reason }
     }
     return executeAndAudit(tool, input, auditLog)
   }

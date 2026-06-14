@@ -47,8 +47,8 @@ export function assembleToolRuntime(requestApproval: ApprovalRequester): ToolRun
       description: tool.description,
       inputSchema: tool.inputSchema,
     })),
-    invoke: async (name, input) => {
-      const outcome = await gate.invoke(name, input)
+    invoke: async (name, input, signal) => {
+      const outcome = await gate.invoke(name, input, signal)
       if (outcome.status === 'executed') {
         return { isSuccess: outcome.result.isSuccess, output: outcome.result.output }
       }

@@ -150,7 +150,10 @@ export function useCompanionSession(requestApproval: ApprovalRequester): Compani
     }
 
     // 승인자는 ref로 감싸 안정 — 도구 런타임은 첫 연결 때 한 번만 조립된다
-    const toolRuntime = assembleToolRuntime((request) => requestApprovalRef.current(request))
+    // signal까지 forward — 끼어들기 시 대기 중 승인이 자동 거부되게 (체인 즉시 중단)
+    const toolRuntime = assembleToolRuntime((request, signal) =>
+      requestApprovalRef.current(request, signal),
+    )
     getOrConnectSession(toolRuntime)
       .then((result) => {
         if (isCancelled) {

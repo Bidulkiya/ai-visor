@@ -25,18 +25,27 @@ export function useToolApproval(): ToolApprovalView {
   const [pending, setPending] = useState<PendingApproval | null>(null)
   const resolveRef = useRef<((isApproved: boolean) => void) | null>(null)
 
-  const requestApproval = useCallback<ApprovalRequester>((request) => {
-    return new Promise<boolean>((resolve) => {
-      resolveRef.current = resolve
-      setPending({ request })
-    })
-  }, [])
-
   const settle = useCallback((isApproved: boolean): void => {
     resolveRef.current?.(isApproved)
     resolveRef.current = null
     setPending(null)
   }, [])
+
+  const requestApproval = useCallback<ApprovalRequester>(
+    (request, signal) => {
+      // 이미 끼어들기로 중단됐으면 묻지 않고 즉시 거부
+      if (signal?.aborted === true) {
+        return Promise.resolve(false)
+      }
+      return new Promise<boolean>((resolve) => {
+        resolveRef.current = resolve
+        setPending({ request })
+        // 승인 대기 중 끼어들면(turn abort) 모달을 닫고 자동 거부한다 — 체인 즉시 중단
+        signal?.addEventListener('abort', () => settle(false), { once: true })
+      })
+    },
+    [settle],
+  )
 
   const approve = useCallback(() => settle(true), [settle])
   const deny = useCallback(() => settle(false), [settle])
