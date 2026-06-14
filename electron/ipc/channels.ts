@@ -26,6 +26,10 @@ export const IPC_CHANNELS = {
   databaseGet: 'database:get',
   databaseAll: 'database:all',
   databaseClose: 'database:close',
+
+  // Python 사이드카(+2 발표) — PPTX 파싱·슬라이드 렌더는 메인이 사이드카로 위임
+  sidecarPickPptx: 'sidecar:pick-pptx',
+  sidecarExtractDeck: 'sidecar:extract-deck',
 } as const
 
 export interface PingResult {
@@ -53,3 +57,25 @@ export interface ToolOperationResult {
   /** 가능한 작업만 — 예: 휴지통 이동된 원래 경로 (R4 롤백 정보) */
   rollbackInfo?: string
 }
+
+/**
+ * 사이드카 발표 와이어 타입 — renderer/src/presentation/sidecarDeck.ts와 거울 동기.
+ * 슬라이드 한 장: 텍스트·노트 + (가능하면) 슬라이드 이미지 data URL. 이미지 없으면 null.
+ */
+export interface SidecarSlide {
+  title: string
+  bodyText: string
+  speakerNotes: string
+  imageDataUrl: string | null
+}
+
+/**
+ * PPTX 추출 결과:
+ * - ok: 슬라이드 추출 성공(렌더는 실패해도 ok — renderNotice로 안내)
+ * - unavailable: 사이드카(Python) 자체가 없음/미준비 — 데모 폴백 대상
+ * - failed: 사이드카는 있으나 이 파일 파싱에 실패
+ */
+export type SidecarExtractResult =
+  | { status: 'ok'; sourceName: string; slides: SidecarSlide[]; renderNotice: string | null }
+  | { status: 'unavailable'; message: string }
+  | { status: 'failed'; message: string }

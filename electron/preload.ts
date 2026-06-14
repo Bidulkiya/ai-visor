@@ -9,6 +9,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC_CHANNELS,
   type PingResult,
+  type SidecarExtractResult,
   type SqlParameters,
   type ToolOperationResult,
 } from './ipc/channels'
@@ -54,6 +55,18 @@ const bridge = {
   tools: {
     runOperation(name: string, input: Record<string, unknown>): Promise<ToolOperationResult> {
       return ipcRenderer.invoke(IPC_CHANNELS.toolOperation, name, input)
+    },
+  },
+
+  /** 발표(+2) — Python 사이드카로 PPTX 파싱·슬라이드 렌더 위임 */
+  presentation: {
+    /** 네이티브 파일 선택. 취소 시 null */
+    pickPptxFile(): Promise<string | null> {
+      return ipcRenderer.invoke(IPC_CHANNELS.sidecarPickPptx)
+    },
+    /** PPTX → 슬라이드 추출. 사이드카 미준비/파싱 실패도 결과 객체로 보고 */
+    extractDeck(pptxPath: string): Promise<SidecarExtractResult> {
+      return ipcRenderer.invoke(IPC_CHANNELS.sidecarExtractDeck, pptxPath)
     },
   },
 

@@ -59,6 +59,9 @@ export default function HomePage() {
         <PresentationPanel
           view={presentation.view}
           isDisabled={session.connectionState !== 'connected' || !presentation.isAvailable}
+          isLoadingDeck={presentation.isLoadingDeck}
+          loadNotice={presentation.loadNotice}
+          onOpenPptx={() => void presentation.openPptx(createDemoSlideDeck())}
           onStart={() => presentation.start(createDemoSlideDeck())}
           onStop={presentation.stop}
           onAskQuestion={presentation.askQuestion}

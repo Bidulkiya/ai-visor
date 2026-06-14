@@ -15,6 +15,13 @@ import type { AskQuestionResult } from '../presentation/controller'
 interface PresentationPanelProps {
   view: PresentationView
   isDisabled: boolean
+  /** PPTX 선택·추출 진행 중 — 시작 버튼 비활성 */
+  isLoadingDeck: boolean
+  /** 덱 로딩 안내(렌더 폴백·데모 폴백·실패). 없으면 null */
+  loadNotice: string | null
+  /** PPTX 파일을 골라 발표 시작 (사이드카) */
+  onOpenPptx(): void
+  /** 데모 슬라이드로 발표 시작 (사이드카 없이도 동작) */
   onStart(): void
   onStop(): void
   onAskQuestion(questionText: string): Promise<AskQuestionResult>
@@ -30,7 +37,16 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
 }
 
-export function PresentationPanel({ view, isDisabled, onStart, onStop, onAskQuestion }: PresentationPanelProps) {
+export function PresentationPanel({
+  view,
+  isDisabled,
+  isLoadingDeck,
+  loadNotice,
+  onOpenPptx,
+  onStart,
+  onStop,
+  onAskQuestion,
+}: PresentationPanelProps) {
   const [questionDraft, setQuestionDraft] = useState('')
   const [notice, setNotice] = useState('')
   const questionInputRef = useRef<HTMLInputElement | null>(null)
@@ -80,15 +96,31 @@ export function PresentationPanel({ view, isDisabled, onStart, onStop, onAskQues
             {view.stopNotice}
           </p>
         )}
-        <button
-          id="presentation-start"
-          className="chat-button"
-          type="button"
-          disabled={isDisabled}
-          onClick={onStart}
-        >
-          ▶ 발표 시작 (데모 슬라이드)
-        </button>
+        {loadNotice !== null && (
+          <p id="presentation-load-notice" className="presentation-notice">
+            {loadNotice}
+          </p>
+        )}
+        <div className="presentation-start-row">
+          <button
+            id="presentation-open-pptx"
+            className="chat-button"
+            type="button"
+            disabled={isDisabled || isLoadingDeck}
+            onClick={onOpenPptx}
+          >
+            {isLoadingDeck ? '불러오는 중…' : '📂 PPTX 열어 발표'}
+          </button>
+          <button
+            id="presentation-start"
+            className="chat-button chat-button-secondary"
+            type="button"
+            disabled={isDisabled || isLoadingDeck}
+            onClick={onStart}
+          >
+            ▶ 데모 슬라이드
+          </button>
+        </div>
       </section>
     )
   }
@@ -120,7 +152,20 @@ export function PresentationPanel({ view, isDisabled, onStart, onStop, onAskQues
             {view.researchBySlide.has(currentSlide.number) && ' · 사전 조사 반영'}
           </p>
           <h3 className="presentation-slide-title">{currentSlide.title}</h3>
-          <p className="presentation-slide-body">{currentSlide.bodyText}</p>
+          {currentSlide.imageDataUrl !== null ? (
+            // 이미지가 있으면 슬라이드 이미지를, 없으면 본문 텍스트를 표시한다.
+            // 데이터 URL(로컬 사이드카 렌더 결과)이라 next/image 최적화 이점이 없어 일반 img를 쓴다.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              className="presentation-slide-image"
+              src={currentSlide.imageDataUrl}
+              alt={`슬라이드 ${currentSlide.number}: ${currentSlide.title}`}
+            />
+          ) : (
+            currentSlide.bodyText.length > 0 && (
+              <p className="presentation-slide-body">{currentSlide.bodyText}</p>
+            )
+          )}
         </div>
       )}
 

@@ -15,6 +15,12 @@ export interface Slide {
   bodyText: string
   /** 발표자 노트 — 없으면 빈 문자열 */
   speakerNotes: string
+  /**
+   * 슬라이드 이미지(data URL) — 사이드카가 LibreOffice로 렌더한 경우만 채워진다.
+   * 없으면 null이고 패널은 텍스트로 표시한다(이미지 없이 발표 가능). 발화 프롬프트엔
+   * 쓰이지 않는다 — 순수 표시용이라 본체 토큰 예산·R5와 무관하다.
+   */
+  imageDataUrl: string | null
 }
 
 export interface SlideDeck {
@@ -28,10 +34,16 @@ interface RawSlideShape {
   title?: unknown
   bodyText?: unknown
   speakerNotes?: unknown
+  imageDataUrl?: unknown
 }
 
 function asTrimmedText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+/** 이미지 data URL만 통과시킨다 — 형식이 아니면 null(텍스트로 표시) */
+function asImageDataUrl(value: unknown): string | null {
+  return typeof value === 'string' && value.startsWith('data:image/') ? value : null
 }
 
 /** 제목·본문이 모두 빈 슬라이드는 발표할 내용이 없다 — 정규화에서 거른다 */
@@ -46,6 +58,7 @@ function normalizeSlide(raw: RawSlideShape, slideNumber: number): Slide | null {
     title,
     bodyText,
     speakerNotes: asTrimmedText(raw.speakerNotes),
+    imageDataUrl: asImageDataUrl(raw.imageDataUrl),
   }
 }
 

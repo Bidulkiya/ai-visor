@@ -18,18 +18,21 @@ export function createDemoSlideDeck(): SlideDeck {
         title: 'AI Visor — 감정을 읽는 데스크톱 AI 동반자',
         bodyText: 'VAD 감정 모델, 로컬 SQLite 기억, Electron 데스크톱 앱',
         speakerNotes: '첫인사와 함께 앱이 무엇인지 한 줄로 소개. 컴퓨터 조종이 아니라 동반자가 본질임을 강조.',
+        imageDataUrl: null,
       },
       {
         number: 2,
         title: '감정과 기억 — 대화가 쌓이는 방식',
         bodyText: 'VAD 3축 감정 추론과 표정 반영, 세션 요약과 사실 추출, 유대(affection) 어투 변화',
         speakerNotes: '감정 추론이 답변과 같은 LLM 호출에서 일어나 지연이 없다는 점, 기억은 전부 로컬이라는 점을 짚는다.',
+        imageDataUrl: null,
       },
       {
         number: 3,
         title: '안전 장치 — 도구 게이트와 격리 구조',
         bodyText: '위험 도구 승인 게이트(risk 태그), 감정의 실행 불개입 원칙, 발표 모듈의 본체 격리',
         speakerNotes: '지금 진행 중인 이 발표 자체가 본체를 모르는 격리 컨트롤러로 돌아간다는 메타 포인트로 마무리.',
+        imageDataUrl: null,
       },
     ],
   }

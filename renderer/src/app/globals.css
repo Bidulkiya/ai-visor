@@ -303,6 +303,19 @@ body {
   color: var(--color-text-dim);
 }
 
+.presentation-slide-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin-top: 6px;
+}
+
+.presentation-start-row {
+  display: flex;
+  gap: 8px;
+}
+
 .presentation-question-row {
   display: flex;
   gap: 8px;

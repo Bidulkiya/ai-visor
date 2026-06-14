@@ -128,6 +128,64 @@ npm run package     # electron-builder --win → release/ 에 설치본
 
 ---
 
+## 발표 모듈 — Python 사이드카 (+2)
+
+PPTX 파일을 열어 노아가 발표하게 하려면 Python 사이드카가 필요하다. **사이드카가
+없어도 앱은 정상 동작한다** — PPTX 열기를 시도하면 명확한 안내와 함께 데모 슬라이드로
+폴백한다(앱이 멈추거나 깨지지 않는다).
+
+### 무엇이 필요한가
+
+| 기능 | 필요 | 없을 때 |
+|---|---|---|
+| 슬라이드 텍스트·발표자 노트 추출 | Python + `python-pptx` | PPTX 열기 시 데모로 폴백 |
+| 슬라이드를 이미지로 표시 | LibreOffice + `PyMuPDF` | 텍스트 모드로 진행(발표는 계속) |
+
+LibreOffice는 OS 패키지라 직접 설치한다(앱이 자동 설치하지 않는다 — 사용자 환경 존중).
+이미지 변환은 LibreOffice가 PPTX→PDF를, PyMuPDF가 PDF→PNG를 맡는다. 둘 중 하나라도
+없으면 그 발표는 텍스트로 진행되고, 개별 슬라이드 변환이 실패하면 그 슬라이드만 텍스트로
+표시된다.
+
+### 개발 모드 (시스템 Python 사용)
+
+```bash
+pip install -r sidecar/requirements.txt
+```
+
+앱은 PATH의 `python`/`python3`/`py -3`를 자동 탐지한다. 특정 인터프리터를 쓰려면
+환경변수 `AIVISOR_PYTHON`에 실행 파일 경로를 지정한다. 사이드카 로그는
+`%APPDATA%/ai-visor/sidecar.log`(userData)에 쌓인다.
+
+사이드카 파싱 로직만 따로 검증:
+
+```bash
+python sidecar/test_parser.py
+```
+
+### 배포용 단일 실행파일 (PyInstaller freeze)
+
+최종 사용자가 Python을 설치하지 않아도 되도록, 사이드카를 단일 실행파일로 freeze해
+앱에 동봉한다.
+
+```bash
+pip install pyinstaller python-pptx PyMuPDF
+pyinstaller --onefile --name ai-visor-sidecar ^
+  --collect-all pptx ^
+  sidecar/server.py
+# 산출물: dist/ai-visor-sidecar.exe
+```
+
+- `--collect-all pptx`는 python-pptx가 런타임에 읽는 XML 템플릿 리소스를 함께 묶는다
+  (이게 없으면 freeze된 실행파일이 PPTX를 열 때 리소스 누락으로 실패한다).
+- 이미지 변환까지 동봉하려면 `--collect-all fitz`(PyMuPDF)도 추가한다. LibreOffice는
+  freeze 대상이 아니므로 사용자 환경에 별도 설치돼 있어야 한다.
+
+electron-builder 패키징 시 이 실행파일을 `resources/sidecar/ai-visor-sidecar.exe`로
+포함하면(예: `build.extraResources`), 패키지 앱은 Python 없이도 사이드카를 띄운다.
+메인 프로세스는 이 프로즌 실행파일을 먼저 찾고, 없으면 시스템 Python으로 폴백한다.
+
+---
+
 ## 라이선스
 
 미정.

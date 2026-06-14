@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url'
 import { IPC_CHANNELS, type PingResult } from './ipc/channels'
 import { registerSqliteDriverHost } from './db/sqliteDriverHost'
 import { registerToolHost } from './tools/toolHost'
+import { registerSidecarHost } from './sidecar/sidecarHost'
 
 const RENDERER_DEV_URL = 'http://localhost:3000'
 const RENDERER_SCHEME = 'app'
@@ -57,6 +58,7 @@ function registerIpcHandlers(): void {
   })
   registerSqliteDriverHost()
   registerToolHost()
+  registerSidecarHost()
 }
 
 /**

@@ -6,12 +6,13 @@
  * 도구 실행 로직을 preload에 두지 않는다 (CLAUDE.md §5 preload 보안 표면).
  */
 
-import { app, ipcMain, net, shell } from 'electron'
+import { ipcMain, net, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync, lstatSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { IPC_CHANNELS, type ToolOperationName, type ToolOperationResult } from '../ipc/channels'
+import { isSensitivePath } from '../security/sensitivePaths'
 
 /** 파일 읽기 상한 — LLM 컨텍스트 보호 */
 const READ_FILE_MAX_CHARS = 20000
@@ -20,24 +21,6 @@ const TRASH_TIMEOUT_MS = 10000
 /** DuckDuckGo Instant Answer API — 키 불필요(R7), 요약형 검색 */
 const SEARCH_API_URL = 'https://api.duckduckgo.com/'
 const SEARCH_MAX_RESULTS = 5
-
-/**
- * 자격증명·시스템 비밀이 모인 위치 — 경로(소문자)에 이 조각이 들어가면 차단.
- * 도구가 임의 시스템 파일을 읽거나/지우는 것을 막는 방어선 (검토 반영).
- */
-const SENSITIVE_PATH_FRAGMENTS: readonly string[] = [
-  '\\.ssh',
-  '\\.aws',
-  '\\.gnupg',
-  '\\windows\\system32\\config',
-  '\\system volume information',
-  'ntuser.dat',
-  'id_rsa',
-  'id_ed25519',
-  '\\appdata\\roaming\\microsoft\\credentials',
-  '\\appdata\\local\\microsoft\\credentials',
-  '\\appdata\\local\\google\\chrome\\user data',
-]
 
 /** caution 등급이라도 임의 시스템 셸·스크립트 호스트 실행은 차단 (검토 반영) */
 const FORBIDDEN_EXECUTABLE_NAMES: readonly string[] = [
@@ -64,16 +47,6 @@ function requireStringField(
     return null
   }
   return value.trim()
-}
-
-/** 민감 위치에 닿는 경로인가 — 자기 데이터(앱 userData)는 예외로 허용 */
-function isSensitivePath(absolutePath: string): boolean {
-  const lower = absolutePath.toLowerCase()
-  const appDataPath = app.getPath('userData').toLowerCase()
-  if (lower.startsWith(appDataPath)) {
-    return false
-  }
-  return SENSITIVE_PATH_FRAGMENTS.some((fragment) => lower.includes(fragment))
 }
 
 /**

@@ -1,0 +1,8 @@
+# AI Visor Python 사이드카 의존성
+#
+# 필수 — PPTX 텍스트·발표자 노트 추출:
+python-pptx>=0.6.23
+#
+# 선택 — 슬라이드 이미지 변환(PDF→PNG)에만 필요. 없으면 텍스트 모드로 폴백한다.
+# (PPTX→PDF는 LibreOffice 헤드리스가 담당 — 이건 OS 패키지라 pip 대상이 아니다.)
+PyMuPDF>=1.24.0

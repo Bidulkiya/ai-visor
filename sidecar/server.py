@@ -1,0 +1,161 @@
+"""AI Visor Python 사이드카 — 로컬 HTTP 서버 (기획서 §8, 원칙 5).
+
+Electron 메인이 자유 포트와 임의 토큰을 인자로 넘겨 이 서버를 spawn한다.
+- 127.0.0.1 에만 바인딩한다(로컬 전용 — 외부 노출 없음).
+- 모든 요청은 X-Sidecar-Token 헤더로 인증한다(같은 머신의 다른 프로세스가
+  임의 파일 경로로 호출하는 것을 차단).
+- 표준출력/표준에러는 메인이 로그 파일로 리다이렉트한다.
+
+라우트:
+  GET  /health  → {"ok": true, "pptx": bool}        준비·의존성 확인용
+  POST /extract → {"sourceName", "slides":[...], "renderStatus", "renderMessage"}
+
+slides[i] = {"number","title","bodyText","speakerNotes","imageDataUrl": str|null}
+imageDataUrl 은 'data:image/png;base64,...' 또는 null(이미지 없음 → 텍스트로).
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import shutil
+import sys
+import tempfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from pptx_parser import extract_slides
+from slide_renderer import render_slides
+
+# 메인 → 사이드카 인증 토큰. start 시 인자로 주입된다(매 실행 새로 발급).
+_AUTH_TOKEN = ""
+
+
+def _png_to_data_url(png_path):
+    if png_path is None or not os.path.exists(png_path):
+        return None
+    try:
+        with open(png_path, "rb") as png_file:
+            encoded = base64.b64encode(png_file.read()).decode("ascii")
+        return "data:image/png;base64," + encoded
+    except OSError:
+        return None
+
+
+def _has_pptx() -> bool:
+    try:
+        import pptx  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+class SidecarHandler(BaseHTTPRequestHandler):
+    # 기본 로깅을 끈다 — 출력은 메인이 로그 파일로 관리한다(버퍼 행 방지)
+    def log_message(self, *args):
+        return
+
+    def _authorized(self) -> bool:
+        return self.headers.get("X-Sidecar-Token") == _AUTH_TOKEN
+
+    def _send_json(self, status_code: int, payload: dict) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        if self.path != "/health":
+            self._send_json(404, {"error": "not found"})
+            return
+        if not self._authorized():
+            self._send_json(403, {"error": "forbidden"})
+            return
+        self._send_json(200, {"ok": True, "pptx": _has_pptx()})
+
+    def do_POST(self) -> None:
+        if self.path != "/extract":
+            self._send_json(404, {"error": "not found"})
+            return
+        if not self._authorized():
+            self._send_json(403, {"error": "forbidden"})
+            return
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            content_length = 0
+        raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+        try:
+            request = json.loads(raw_body or b"{}")
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "요청 본문이 JSON이 아닙니다."})
+            return
+
+        pptx_path = request.get("pptxPath")
+        want_render = bool(request.get("render", True))
+        if not isinstance(pptx_path, str) or not os.path.isabs(pptx_path) or not os.path.exists(pptx_path):
+            self._send_json(400, {"error": "잘못되거나 존재하지 않는 PPTX 경로입니다."})
+            return
+
+        try:
+            slides = extract_slides(pptx_path)
+        except Exception as error:  # python-pptx의 다양한 예외를 한데 흡수
+            self._send_json(500, {"error": "PPTX 파싱에 실패했습니다: %s" % error})
+            return
+
+        render_status = "skipped"
+        render_message = None
+        out_dir = None
+        try:
+            if want_render and slides:
+                out_dir = tempfile.mkdtemp(prefix="aivisor-slides-")
+                render = render_slides(pptx_path, out_dir, len(slides))
+                render_status = render["status"]
+                render_message = render["message"]
+                images = render["images"]
+                for index, slide in enumerate(slides):
+                    png_path = images[index] if index < len(images) else None
+                    slide["imageDataUrl"] = _png_to_data_url(png_path)
+            else:
+                for slide in slides:
+                    slide["imageDataUrl"] = None
+        finally:
+            # PNG는 data URL로 이미 인코딩됐으므로 임시 파일을 즉시 정리한다(잔재 방지)
+            if out_dir is not None:
+                shutil.rmtree(out_dir, ignore_errors=True)
+
+        self._send_json(
+            200,
+            {
+                "sourceName": os.path.basename(pptx_path),
+                "slides": slides,
+                "renderStatus": render_status,
+                "renderMessage": render_message,
+            },
+        )
+
+
+def main() -> int:
+    global _AUTH_TOKEN
+    parser = argparse.ArgumentParser(description="AI Visor Python sidecar")
+    parser.add_argument("--port", type=int, required=True, help="바인딩할 로컬 포트(메인이 지정)")
+    parser.add_argument("--token", type=str, required=True, help="요청 인증 토큰(메인이 발급)")
+    args = parser.parse_args()
+    _AUTH_TOKEN = args.token
+
+    # 127.0.0.1 전용 바인딩 — 외부 노출 금지. 포트가 점유 중이면 즉시 실패(메인이 감지)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), SidecarHandler)
+    print("[sidecar] listening on 127.0.0.1:%d" % args.port, file=sys.stderr, flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
