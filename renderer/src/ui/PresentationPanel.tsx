@@ -9,8 +9,13 @@
 'use client'
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { FolderOpen, Hand, MessageSquare, Play, Presentation, Square } from 'lucide-react'
 import type { PresentationView } from '../presentation/controller'
 import type { AskQuestionResult } from '../presentation/controller'
+
+/** 버튼·라벨 안 lucide 아이콘 공통 크기·선두께 */
+const ICON_SIZE = 16
+const ICON_STROKE = 1.9
 
 interface PresentationPanelProps {
   view: PresentationView
@@ -109,7 +114,8 @@ export function PresentationPanel({
             disabled={isDisabled || isLoadingDeck}
             onClick={onOpenPptx}
           >
-            {isLoadingDeck ? '불러오는 중…' : '📂 PPTX 열어 발표'}
+            <FolderOpen size={ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
+            {isLoadingDeck ? '불러오는 중…' : 'PPTX 열어 발표'}
           </button>
           <button
             id="presentation-start"
@@ -118,7 +124,8 @@ export function PresentationPanel({
             disabled={isDisabled || isLoadingDeck}
             onClick={onStart}
           >
-            ▶ 데모 슬라이드
+            <Play size={ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
+            데모 슬라이드
           </button>
         </div>
       </section>
@@ -133,8 +140,12 @@ export function PresentationPanel({
   return (
     <section className="presentation-panel" data-stage={view.stage.name}>
       <div className="presentation-header">
-        <span className="presentation-title">📊 발표 모드 — {view.deck?.sourceName ?? ''}</span>
+        <span className="presentation-title">
+          <Presentation size={ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
+          발표 모드 — {view.deck?.sourceName ?? ''}
+        </span>
         <button id="presentation-stop" className="chat-button chat-button-secondary" type="button" onClick={onStop}>
+          <Square size={ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
           발표 종료
         </button>
       </div>
@@ -170,8 +181,9 @@ export function PresentationPanel({
       )}
 
       {view.stage.name === 'answering' && (
-        <p id="presentation-status" className="presentation-status">
-          ❓ 질문에 답하는 중: “{view.stage.question}”
+        <p id="presentation-status" className="presentation-status presentation-status-icon">
+          <MessageSquare size={ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
+          질문에 답하는 중: “{view.stage.question}”
         </p>
       )}
 
@@ -187,7 +199,8 @@ export function PresentationPanel({
             onChange={(event) => setQuestionDraft(event.target.value)}
           />
           <button id="presentation-ask" className="chat-button chat-button-secondary" type="submit">
-            ✋ 질문
+            <Hand size={ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
+            질문
           </button>
         </form>
       )}

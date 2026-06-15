@@ -6,6 +6,7 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
+import { X } from 'lucide-react'
 import { clearApiKey, getStoredApiKey, maskApiKey, saveApiKey } from './apiKeySettings'
 
 interface SettingsPanelProps {
@@ -46,8 +47,15 @@ export function SettingsPanel({ isOpen, onClose, onApiKeyChanged }: SettingsPane
     <div id="settings-panel" className="settings-panel">
       <div className="settings-header">
         <h2 className="settings-title">설정</h2>
-        <button id="settings-close" className="chat-button chat-button-secondary" type="button" onClick={onClose}>
-          닫기
+        <button
+          id="settings-close"
+          className="chat-button chat-button-secondary chat-button-icon"
+          type="button"
+          title="닫기"
+          aria-label="닫기"
+          onClick={onClose}
+        >
+          <X size={18} strokeWidth={1.9} aria-hidden="true" />
         </button>
       </div>
 

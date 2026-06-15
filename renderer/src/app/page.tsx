@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { Settings } from 'lucide-react'
 import { ApprovalDialog } from '../ui/ApprovalDialog'
 import { ChatPanel } from '../ui/ChatPanel'
 import { FaceCanvas } from '../ui/FaceCanvas'
@@ -46,7 +47,8 @@ export default function HomePage() {
           type="button"
           onClick={() => setIsSettingsOpen(true)}
         >
-          ⚙ 설정
+          <Settings size={16} strokeWidth={1.9} aria-hidden="true" />
+          설정
         </button>
       </aside>
 

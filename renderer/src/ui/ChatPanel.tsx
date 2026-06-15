@@ -6,7 +6,13 @@
 'use client'
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Mic, Send, Square, Volume2, VolumeX } from 'lucide-react'
 import type { ChatMessage } from './useCompanionSession'
+import { MarkdownText } from './MarkdownText'
+
+/** 버튼 안 lucide 아이콘 공통 크기·선두께 — 전 화면 일관성 */
+const ICON_SIZE = 18
+const ICON_STROKE = 1.9
 
 export interface VoiceControls {
   isCapturing: boolean
@@ -73,8 +79,9 @@ export function ChatPanel({ messages, isThinking, isDisabled, onSend, onInterrup
             data-role={message.role}
             data-streaming={message.isStreaming ? 'true' : 'false'}
           >
-            {message.text}
-            {message.isStreaming && <span className="chat-caret">▌</span>}
+            <div className="chat-markdown">
+              <MarkdownText source={message.text} streaming={message.isStreaming} />
+            </div>
           </div>
         ))}
         {isThinking && <p className="chat-thinking">…</p>}
@@ -94,9 +101,10 @@ export function ChatPanel({ messages, isThinking, isDisabled, onSend, onInterrup
         />
         <button
           id="voice-talk"
-          className={`chat-button chat-button-secondary${voice.isCapturing ? ' chat-button-active' : ''}`}
+          className={`chat-button chat-button-secondary chat-button-icon${voice.isCapturing ? ' chat-button-active' : ''}`}
           type="button"
           title="누르고 있는 동안 말하기 (푸시투토크)"
+          aria-label="말하기 (푸시투토크)"
           disabled={isDisabled}
           onMouseDown={voice.onTalkStart}
           onMouseUp={voice.onTalkEnd}
@@ -105,27 +113,41 @@ export function ChatPanel({ messages, isThinking, isDisabled, onSend, onInterrup
           onTouchStart={voice.onTalkStart}
           onTouchEnd={voice.onTalkEnd}
         >
-          🎤
+          <Mic size={ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
         </button>
         <button
           id="voice-speaker"
-          className="chat-button chat-button-secondary"
+          className="chat-button chat-button-secondary chat-button-icon"
           type="button"
           title={voice.isSpeakerEnabled ? '음성 출력 끄기' : '음성 출력 켜기'}
+          aria-label={voice.isSpeakerEnabled ? '음성 출력 끄기' : '음성 출력 켜기'}
           onClick={voice.onToggleSpeaker}
         >
-          {voice.isSpeakerEnabled ? '🔊' : '🔇'}
+          {voice.isSpeakerEnabled ? (
+            <Volume2 size={ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
+          ) : (
+            <VolumeX size={ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
+          )}
         </button>
-        <button id="chat-send" className="chat-button" type="submit" disabled={isDisabled}>
-          전송
+        <button
+          id="chat-send"
+          className="chat-button chat-button-icon"
+          type="submit"
+          title="전송"
+          aria-label="전송"
+          disabled={isDisabled}
+        >
+          <Send size={ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
         </button>
         <button
           id="chat-interrupt"
-          className="chat-button chat-button-secondary"
+          className="chat-button chat-button-secondary chat-button-icon"
           type="button"
+          title="중단"
+          aria-label="중단"
           onClick={onInterrupt}
         >
-          중단
+          <Square size={ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
         </button>
       </form>
     </section>

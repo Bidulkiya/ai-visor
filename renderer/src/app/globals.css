@@ -1,38 +1,65 @@
 /*
- * AI Visor — 외관 테마 (다크 · 차분 · 절제)
+ * AI Visor — 외관 테마 v3 (글래스 · 깊이 · 절제된 모션)
  *
- * 외관(색·타이포·간격·모션)만 정의한다. 컴포넌트 JSX·배선은 건드리지 않는다.
- * 모든 표면이 이 한 곳의 토큰을 쓴다(테마 변수화).
+ * 외관(색·머티리얼·타이포·간격·모션)만 정의한다. 컴포넌트 JSX·배선은 건드리지 않는다.
+ * 모든 표면이 이 한 곳의 토큰을 쓴다(테마 변수화). 클래스명은 절대 바꾸지 않는다(JSX가 참조).
  *
- * 표정(face-*) 색은 전용 토큰(--face-*)으로 분리해 기존 모습을 그대로 보존한다.
- * face 자체의 디자인은 이번 개편 대상이 아니다.
+ * 미학 기준: Linear·Raycast·Arc·visionOS — "화려함"이 아니라 "정교한 디테일 + 절제".
+ * 글래스(반투명+blur)·다층 그림자·미세 그레인으로 평면을 탈피하되 노아의 차분함을 유지한다.
+ *
+ * 성능: 모션·전환은 transform/opacity 위주(60fps). backdrop-filter는 자주 리렌더되는
+ *   말풍선이 아니라 '안정적인 패널'에만 쓴다. prefers-reduced-motion이면 모션을 끈다.
+ *
+ * 표정(face-*) 색은 전용 토큰(--face-*)으로 분리해 기존 모습을 그대로 보존한다(개편 대상 아님).
  */
 
 :root {
-  /* ── 색: 중성 다크 램프 (푸른빛/보라빛 없는 차분한 차콜) ── */
-  --bg: #0e0f12;
-  --bg-inset: #0a0b0d;
+  /* ── 색: 미묘한 한기를 머금은 딥 다크(순수 회색 아님) ── */
+  --bg: #0b0d0f;
+  --bg-deep: #07080a;
+  --bg-inset: #0a0c0e;
+
+  /* 불투명 폴백 표면(블러 미지원/성능 모드) */
   --surface: #16181c;
-  --surface-2: #1d2025;
+  --surface-2: #1c1f24;
   --surface-3: #24272e;
+
+  /* 글래스 머티리얼 — 반투명 표면 + 헤어라인 + 상단 하이라이트 */
+  --glass: rgba(23, 26, 30, 0.62);
+  --glass-2: rgba(30, 34, 39, 0.55);
+  --glass-strong: rgba(24, 27, 32, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-soft: rgba(255, 255, 255, 0.05);
+  --hairline: rgba(255, 255, 255, 0.07);
+  --blur: 22px;
+  --blur-strong: 32px;
+
   --border: #282b32;
   --border-strong: #353942;
-  --scrollbar-hover: #434853;
+  --scrollbar: rgba(255, 255, 255, 0.1);
+  --scrollbar-hover: rgba(255, 255, 255, 0.2);
 
-  --text: #e7e8eb;
-  --text-dim: #9499a2;
-  /* 가장 약한 텍스트 — 대비를 충분히 높여 읽히게(캡션·플레이스홀더·힌트) */
-  --text-faint: #767b85;
+  --text: #eceef1;
+  --text-dim: #9aa0a9;
+  /* 가장 흐린 텍스트(캡션·힌트·placeholder) — 딥다크/글래스 위에서도 WCAG AA(4.5:1)를
+     넘도록 충분히 밝게(가장 어두운 배경에서도 ~5:1). dim보다는 흐려 위계는 유지 */
+  --text-faint: #868b95;
 
-  /* 차분한 세이지-틸 — 화려하지 않게, 강조는 아껴 쓴다 */
+  /* 차분한 세이지-틸 — 강조는 아껴 쓰되, 단색 대신 미묘한 그라데이션으로 */
   --accent: #7fb3a3;
+  --accent-bright: #93c4b4;
   --accent-quiet: #5e8b7e;
+  --accent-grad: linear-gradient(135deg, #82b6a6 0%, #5f9587 100%);
   --accent-tint: rgba(127, 179, 163, 0.12);
-  --accent-tint-strong: rgba(127, 179, 163, 0.18);
-  --on-accent: #0c1411;
+  --accent-tint-strong: rgba(127, 179, 163, 0.2);
+  --accent-glow: rgba(127, 179, 163, 0.45);
+  --accent-glow-soft: rgba(127, 179, 163, 0.16);
+  --on-accent: #08120f;
 
-  --danger: #d97b82;
-  --danger-tint: rgba(217, 123, 130, 0.12);
+  --danger: #df848a;
+  --danger-grad: linear-gradient(135deg, #e08a90 0%, #cf6e76 100%);
+  --danger-tint: rgba(217, 123, 130, 0.14);
+  --danger-glow: rgba(217, 123, 130, 0.5);
 
   /* ── 타이포 스케일 ── */
   --font-sans:
@@ -42,27 +69,53 @@
   --fs-caption: 11.5px;
   --fs-small: 12.5px;
   --fs-body: 14px;
-  --fs-title: 15px;
-  --fs-header: 17px;
-  --lh-body: 1.6;
+  --fs-title: 15.5px;
+  --fs-header: 18px;
+  --lh-body: 1.62;
+  --tracking-tight: -0.012em;
+  --tracking-wide: 0.06em;
 
-  /* ── 간격 리듬 ── */
+  /* ── 간격 리듬(Apple식 호흡) ── */
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
   --sp-4: 16px;
   --sp-5: 20px;
   --sp-6: 24px;
+  --sp-7: 32px;
 
-  /* ── 형태 ── */
-  --radius-card: 14px;
-  --radius-control: 10px;
-  --radius-bubble: 16px;
-  /* 드롭섀도 + 테두리 링 + 화면 디밍 백드롭(100vmax 스프레드 — 클릭은 통과해 기존 동작 보존) */
-  --shadow-overlay: 0 24px 64px -16px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--border-strong),
-    0 0 0 100vmax rgba(0, 0, 0, 0.5);
+  /* ── 라운드 반경 시스템(일관) ── */
+  --radius-xs: 7px;
+  --radius-control: 11px;
+  --radius-card: 18px;
+  --radius-bubble: 18px;
+  --radius-full: 999px;
+
+  /* ── 다층 그림자(key light + ambient) ── */
+  --shadow-float:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 6px 16px -8px rgba(0, 0, 0, 0.5);
+  --shadow-float-lg:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 12px 32px -10px rgba(0, 0, 0, 0.55),
+    0 2px 6px -2px rgba(0, 0, 0, 0.4);
+  /* 모달: 다층 그림자 + 헤어라인 링 + 화면 디밍(100vmax — 클릭은 통과해 기존 동작 보존) */
+  --shadow-overlay:
+    0 24px 70px -16px rgba(0, 0, 0, 0.75),
+    0 2px 8px rgba(0, 0, 0, 0.4),
+    0 0 0 1px var(--glass-border),
+    0 0 0 100vmax rgba(0, 0, 0, 0.55);
+  /* 상단 안쪽 하이라이트 — 유리 윗면이 빛을 받는 느낌(6%는 거의 안 보여 10%로:
+     Linear/Arc도 10~12%대를 써 부양감을 살린다) */
+  --inner-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+
+  /* ── 모션 곡선(선형 금지) ── */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
-  --dur: 160ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
+  --dur-fast: 130ms;
+  --dur: 220ms;
+  --dur-slow: 360ms;
 
   /* ── 표정 — 기존 모습 보존(개편 대상 아님) ── */
   --face-fill: #2a2d36;
@@ -83,24 +136,57 @@ body {
   font-family: var(--font-sans);
   font-size: var(--fs-body);
   line-height: var(--lh-body);
+  letter-spacing: -0.003em;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* 차분한 스크롤바 — 가늘고 은은하게 */
+/* 배경 1층 — 은은한 그라데이션 메시(세이지-틸 ambient). 패널 backdrop-filter가 이걸 머금는다 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 18% 12%, rgba(127, 179, 163, 0.1), transparent 60%),
+    radial-gradient(55% 45% at 88% 86%, rgba(110, 150, 165, 0.08), transparent 60%),
+    radial-gradient(70% 60% at 50% 120%, rgba(95, 149, 135, 0.06), transparent 55%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
+}
+
+/* 배경 2층 — 미세 필름 그레인(평면 탈피, 아주 은은하게). 정적 이미지라 GPU 부담 없음 */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* 콘텐츠는 배경 위로 */
+.app-layout {
+  position: relative;
+  z-index: 1;
+}
+
+/* 차분한 스크롤바 — 가늘고 은은하게(Raycast 톤) */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-color: var(--scrollbar) transparent;
 }
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 *::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
+  background: var(--scrollbar);
   border: 3px solid transparent;
   background-clip: padding-box;
-  border-radius: 8px;
+  border-radius: var(--radius-full);
+  transition: background var(--dur) var(--ease);
 }
 *::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-hover);
@@ -113,8 +199,7 @@ body {
   height: 100vh;
   gap: var(--sp-4);
   padding: var(--sp-4);
-  /* 페이지 자체는 절대 스크롤되지 않는다 — 표정(좌측)은 항상 보이고,
-     스크롤은 채팅 메시지 영역 안에서만 일어난다 */
+  /* 페이지 자체는 스크롤되지 않는다 — 스크롤은 채팅 메시지 영역 안에서만 */
   overflow: hidden;
 }
 
@@ -124,30 +209,69 @@ body {
   font-size: var(--fs-title);
 }
 
+/* ── 표정 컬럼 — 떠 있는 유리 카드 + 앰비언트 글로우 ── */
 .app-face-column {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 280px;
+  width: 300px;
   flex-shrink: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  padding: var(--sp-6);
+  overflow: hidden;
   border-radius: var(--radius-card);
-  padding: var(--sp-5);
-  /* 표정 뒤로 은은한 깊이감 — 과하지 않은 비네트 */
-  background-image: radial-gradient(120% 80% at 50% 38%, rgba(127, 179, 163, 0.05), transparent 70%);
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.3);
+  backdrop-filter: blur(var(--blur)) saturate(1.3);
+  box-shadow: var(--shadow-float-lg), var(--inner-highlight);
+}
+
+/* 표정 뒤 은은한 ambient glow — 천천히 호흡하듯(감정의 따뜻함을 암시, 과하지 않게) */
+.app-face-column::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  width: 280px;
+  height: 280px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, var(--accent-glow-soft) 0%, transparent 65%);
+  filter: blur(8px);
+  animation: glow-breathe 7s var(--ease-out) infinite;
+}
+
+/* 컬럼 안 콘텐츠는 글로우 위로 */
+.app-face-column > * {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes glow-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: translate(-50%, -50%) scale(0.96);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(1.06);
+  }
 }
 
 .app-onboarding {
-  margin-top: var(--sp-3);
+  margin-top: var(--sp-4);
   font-size: var(--fs-small);
   color: var(--text-dim);
   text-align: center;
-  line-height: 1.5;
+  line-height: 1.55;
+  animation: rise-in var(--dur-slow) var(--ease-out) both;
 }
 
-/* ── 표정 (색 보존 — 개편 대상 아님) ── */
+/* ── 표정 (색·형태 보존 — 개편 대상 아님) ── */
 .face-panel {
   display: flex;
   flex-direction: column;
@@ -155,8 +279,10 @@ body {
 }
 
 .face-svg {
-  width: 220px;
-  height: 220px;
+  width: 224px;
+  height: 224px;
+  /* 표정에 아주 옅은 그림자로 입체감(도형 자체는 불변) */
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
 }
 
 .face-outline {
@@ -177,9 +303,9 @@ body {
 }
 
 .face-status {
-  margin: var(--sp-3) 0 0;
+  margin: var(--sp-4) 0 0;
   font-size: var(--fs-caption);
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   color: var(--text-faint);
 }
@@ -191,21 +317,23 @@ body {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  gap: var(--sp-2);
+  gap: var(--sp-3);
 }
 
-/* ── 채팅 ── */
+/* ── 채팅 — 떠 있는 유리 카드 ── */
 .chat-panel {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
-  /* flexbox 내부 스크롤 체인 — 이게 없으면 내용이 부모를 밀어내 페이지가 스크롤된다 */
   min-height: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  padding: var(--sp-6);
   border-radius: var(--radius-card);
-  padding: var(--sp-5);
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.3);
+  backdrop-filter: blur(var(--blur)) saturate(1.3);
+  box-shadow: var(--shadow-float-lg), var(--inner-highlight);
 }
 
 .chat-messages {
@@ -215,7 +343,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
-  padding-right: var(--sp-1);
+  padding-right: var(--sp-2);
 }
 
 .chat-empty {
@@ -234,50 +362,58 @@ body {
 @keyframes thinking-pulse {
   0%,
   100% {
-    opacity: 0.45;
+    opacity: 0.4;
   }
   50% {
-    opacity: 0.9;
+    opacity: 0.85;
   }
 }
 
+/* ── 말풍선 ── (자주 리렌더되므로 backdrop-filter는 쓰지 않는다 — 성능) */
 .chat-bubble {
-  max-width: 78%;
+  max-width: 80%;
   padding: var(--sp-3) var(--sp-4);
   border-radius: var(--radius-bubble);
-  white-space: pre-wrap;
   word-break: break-word;
   line-height: var(--lh-body);
   font-size: var(--fs-body);
-  /* 새 말풍선이 조용히 떠오른다 — 한 번만(마운트 시) */
-  animation: bubble-in 200ms var(--ease) both;
+  box-shadow: var(--shadow-float);
+  /* 등장: 살짝 아래+축소에서 부드럽게(ease-out, 마운트 1회) */
+  animation: bubble-in var(--dur) var(--ease-out) both;
 }
 
 @keyframes bubble-in {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(6px) scale(0.985);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
+/* 사용자 — 강조색 그라데이션 채움으로 또렷이(노아와 한눈에 구분) */
 .chat-bubble-user {
   align-self: flex-end;
-  background: var(--accent-tint-strong);
-  border: 1px solid var(--accent-tint-strong);
-  color: var(--text);
+  background: var(--accent-grad);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--on-accent);
   border-bottom-right-radius: var(--sp-1);
+  box-shadow: var(--shadow-float), 0 6px 18px -8px var(--accent-glow);
 }
 
+/* 노아 — 떠 있는 솔리드 카드 + 헤어라인으로 배경과 분리.
+   ★ backdrop-filter를 쓰지 않는다: 말풍선은 스트리밍 토큰마다 리렌더되므로 매 프레임
+   블러 재계산을 유발한다(헤더 성능 규칙). 글래스 질감은 패널이 맡고, 말풍선은 또렷한
+   솔리드 표면으로 가독성을 우선한다. */
 .chat-bubble-companion {
   align-self: flex-start;
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
   color: var(--text);
   border-bottom-left-radius: var(--sp-1);
+  box-shadow: var(--shadow-float), var(--inner-highlight);
 }
 
 .chat-bubble-error {
@@ -288,20 +424,88 @@ body {
 
 .chat-caret {
   margin-left: 2px;
-  color: var(--accent);
-  animation: caret-blink 1s steps(2) infinite;
+  color: var(--accent-bright);
+  animation: caret-blink 1.05s steps(2) infinite;
 }
 
 @keyframes caret-blink {
   to {
-    visibility: hidden;
+    opacity: 0;
   }
 }
 
+/* ── 채팅 마크다운 서식 (표시 전용 — TTS는 별도 경로의 스트림 원본을 받는다) ── */
+.chat-markdown {
+  white-space: normal;
+}
+.chat-markdown > * {
+  margin: 0;
+}
+.chat-markdown > * + * {
+  margin-top: var(--sp-2);
+}
+.md-paragraph {
+  white-space: pre-wrap;
+}
+.md-heading {
+  font-weight: 650;
+  font-size: var(--fs-title);
+  letter-spacing: var(--tracking-tight);
+}
+.md-heading[data-level='1'] {
+  font-size: var(--fs-header);
+}
+.md-list {
+  margin: 0;
+  padding-left: 1.45em;
+}
+.md-list li {
+  margin: 3px 0;
+}
+.md-list li::marker {
+  color: var(--accent);
+}
+.md-quote {
+  padding: var(--sp-1) 0 var(--sp-1) var(--sp-3);
+  border-left: 2px solid var(--accent-quiet);
+  color: var(--text-dim);
+}
+.md-code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--hairline);
+}
+.md-codeblock {
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--radius-control);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--inner-highlight);
+  overflow-x: auto;
+  font-size: var(--fs-small);
+  line-height: 1.55;
+}
+.md-codeblock code {
+  font-family: var(--font-mono);
+  white-space: pre;
+}
+.md-link {
+  color: var(--accent-bright);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+/* ── 입력 행 ── */
 .chat-input-row {
   display: flex;
+  align-items: center;
   gap: var(--sp-2);
-  margin-top: var(--sp-4);
+  margin-top: var(--sp-5);
 }
 
 .chat-input {
@@ -309,13 +513,14 @@ body {
   min-width: 0;
   padding: var(--sp-3) var(--sp-4);
   border-radius: var(--radius-control);
-  border: 1px solid var(--border);
-  background: var(--bg-inset);
+  border: 1px solid var(--glass-border);
+  background: rgba(0, 0, 0, 0.25);
   color: var(--text);
   font-family: inherit;
   font-size: var(--fs-body);
   outline: none;
-  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+    background var(--dur) var(--ease);
 }
 
 .chat-input::placeholder {
@@ -324,78 +529,109 @@ body {
 
 .chat-input:focus {
   border-color: var(--accent-quiet);
-  box-shadow: 0 0 0 3px var(--accent-tint);
+  background: rgba(0, 0, 0, 0.32);
+  box-shadow: 0 0 0 3px var(--accent-tint), var(--inner-highlight);
 }
 
 .chat-input:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
-/* ── 버튼 ── */
+/* ── 버튼 ──
+ * 위계: 주요(.chat-button)=강조 그라데이션 채움 + 글로우, 보조(.chat-button-secondary)=유리 고스트.
+ * .chat-button-icon은 정사각 아이콘 버튼. 모션은 transform/opacity 위주(60fps). */
 .chat-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-5);
   border-radius: var(--radius-control);
-  border: 1px solid transparent;
-  background: var(--accent-quiet);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--accent-grad);
   color: var(--on-accent);
   font-family: inherit;
   font-size: var(--fs-body);
-  font-weight: 500;
+  font-weight: 550;
   line-height: 1.2;
   cursor: pointer;
   white-space: nowrap;
-  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
-    color var(--dur) var(--ease), opacity var(--dur) var(--ease);
+  box-shadow: 0 2px 10px -4px var(--accent-glow), var(--inner-highlight);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease),
+    box-shadow var(--dur) var(--ease-out), transform var(--dur-fast) var(--ease-spring);
 }
 
+.chat-button svg {
+  flex-shrink: 0;
+}
+
+/* 호버 — 살짝 떠오르며 글로우가 짙어진다(마이크로 인터랙션) */
 .chat-button:hover:not(:disabled) {
-  background: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px -4px var(--accent-glow), var(--inner-highlight);
 }
 
-/* 키보드 포커스 — 입력칸과 같은 은은한 링(접근성) */
+.chat-button-icon {
+  padding: 0;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+}
+
 .chat-button:focus-visible {
   outline: none;
-  border-color: var(--accent-quiet);
-  box-shadow: 0 0 0 3px var(--accent-tint);
+  box-shadow: 0 0 0 3px var(--accent-tint), 0 6px 18px -4px var(--accent-glow);
 }
 
-/* 누름 피드백 — 살짝 눌리는 촉감(과하지 않게) */
+/* 누름 — 떠오름을 거두고 살짝 가라앉는다(촉감) */
 .chat-button:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: translateY(0) scale(0.97);
+  transition-duration: var(--dur-fast);
 }
 
 .chat-button:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: default;
+  box-shadow: none;
 }
 
-/* 보조 버튼 — 고스트(테두리만), 호버에 은은히 차오른다 */
+/* 보조 — 유리 고스트(헤어라인), 호버에 은은히 차오른다. 글로우 없음(위계 양보) */
 .chat-button-secondary {
-  background: transparent;
-  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--glass-border);
   color: var(--text-dim);
+  box-shadow: var(--inner-highlight);
 }
 
 .chat-button-secondary:hover:not(:disabled) {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--glass-border);
   color: var(--text);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-float), var(--inner-highlight);
 }
 
-/* 녹음 중 등 활성 표시 — 또렷한 경고 톤(기능 인지용) */
+.chat-button-secondary:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+/* 녹음 중 등 활성 — 또렷한 경고 톤(기능 인지용) */
 .chat-button-active,
 .chat-button-active:hover:not(:disabled) {
-  background: var(--danger);
-  border-color: var(--danger);
+  background: var(--danger-grad);
+  border-color: rgba(255, 255, 255, 0.12);
   color: var(--on-accent);
+  box-shadow: 0 4px 16px -4px var(--danger-glow), var(--inner-highlight);
 }
 
 /* 위험 작업 버튼 */
 .chat-button-danger,
 .chat-button-danger:hover:not(:disabled) {
-  background: var(--danger);
-  border-color: var(--danger);
+  background: var(--danger-grad);
+  border-color: rgba(255, 255, 255, 0.12);
   color: var(--on-accent);
+  box-shadow: 0 4px 16px -4px var(--danger-glow), var(--inner-highlight);
 }
 
 .voice-notice {
@@ -411,19 +647,25 @@ body {
   border-radius: var(--radius-control);
   border: 1px solid var(--accent-tint-strong);
   background: var(--accent-tint);
-  color: var(--accent);
+  color: var(--accent-bright);
   font-size: var(--fs-small);
+  box-shadow: var(--inner-highlight);
+  animation: rise-in var(--dur) var(--ease-out) both;
 }
 
-/* ── 발표 모드 ── */
+/* ── 발표 모드 — 떠 있는 유리 카드 ── */
 .presentation-panel {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  padding: var(--sp-4) var(--sp-5);
   border-radius: var(--radius-card);
-  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.3);
+  backdrop-filter: blur(var(--blur)) saturate(1.3);
+  box-shadow: var(--shadow-float-lg), var(--inner-highlight);
+  animation: rise-in var(--dur) var(--ease-out) both;
 }
 
 .presentation-header {
@@ -434,8 +676,11 @@ body {
 }
 
 .presentation-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
   font-size: var(--fs-small);
-  font-weight: 500;
+  font-weight: 550;
   letter-spacing: 0.01em;
   color: var(--text-dim);
 }
@@ -446,17 +691,24 @@ body {
   color: var(--text-dim);
 }
 
+.presentation-status-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
 .presentation-slide {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-control);
   padding: var(--sp-3) var(--sp-4);
+  box-shadow: var(--inner-highlight);
 }
 
 .presentation-slide-number {
   margin: 0;
   font-size: var(--fs-caption);
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
   color: var(--text-faint);
 }
@@ -464,8 +716,8 @@ body {
 .presentation-slide-title {
   margin: var(--sp-1) 0;
   font-size: var(--fs-title);
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-weight: 650;
+  letter-spacing: var(--tracking-tight);
 }
 
 .presentation-slide-body {
@@ -478,9 +730,9 @@ body {
   display: block;
   width: 100%;
   height: auto;
-  border-radius: var(--sp-2);
+  border-radius: var(--radius-xs);
   margin-top: var(--sp-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
 }
 
 .presentation-start-row,
@@ -495,9 +747,9 @@ body {
   color: var(--danger);
 }
 
-/* ── 설정 / 승인 모달 ── */
+/* ── 설정 / 승인 모달 — 프로스티드 글래스 카드 ── */
 .settings-open-button {
-  margin-top: var(--sp-4);
+  margin-top: var(--sp-5);
 }
 
 .settings-panel {
@@ -505,25 +757,27 @@ body {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 400px;
+  width: 420px;
   max-width: calc(100vw - 32px);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-card);
   padding: var(--sp-6);
-  box-shadow: var(--shadow-overlay);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(var(--blur-strong)) saturate(1.4);
+  backdrop-filter: blur(var(--blur-strong)) saturate(1.4);
+  box-shadow: var(--shadow-overlay), var(--inner-highlight);
   z-index: 10;
-  animation: overlay-in 180ms var(--ease) both;
+  animation: overlay-in var(--dur) var(--ease-out) both;
 }
 
 @keyframes overlay-in {
   from {
     opacity: 0;
-    transform: translate(-50%, calc(-50% + 6px));
+    transform: translate(-50%, calc(-50% + 8px)) scale(0.98);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, -50%);
+    transform: translate(-50%, -50%) scale(1);
   }
 }
 
@@ -531,14 +785,21 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--sp-4);
+  margin-bottom: var(--sp-5);
 }
 
 .settings-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   margin: 0;
   font-size: var(--fs-header);
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-weight: 650;
+  letter-spacing: var(--tracking-tight);
+}
+
+.settings-title-danger {
+  color: var(--danger);
 }
 
 .settings-status {
@@ -550,7 +811,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
-  margin-top: var(--sp-3);
+  margin-top: var(--sp-4);
 }
 
 .settings-actions {
@@ -560,24 +821,25 @@ body {
 
 .settings-notice {
   font-size: var(--fs-small);
-  color: var(--accent);
-  margin: var(--sp-2) 0 0;
+  color: var(--accent-bright);
+  margin: var(--sp-3) 0 0;
 }
 
 .settings-hint {
   font-size: var(--fs-small);
   color: var(--text-faint);
-  margin: var(--sp-2) 0 0;
-  line-height: 1.5;
+  margin: var(--sp-3) 0 0;
+  line-height: 1.55;
 }
 
 /* 승인 모달의 입력 미리보기 — 코드 톤 */
 .approval-input {
   margin: var(--sp-3) 0;
-  padding: var(--sp-3);
-  border-radius: var(--sp-2);
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--radius-control);
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--inner-highlight);
   color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: var(--fs-small);
@@ -585,4 +847,27 @@ body {
   word-break: break-word;
   max-height: 180px;
   overflow-y: auto;
+}
+
+/* 공통 등장 모션 — 작은 요소가 부드럽게 떠오른다 */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── 접근성·성능: 모션 민감 사용자는 모든 애니메이션·전환을 끈다 ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

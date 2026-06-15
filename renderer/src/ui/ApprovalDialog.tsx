@@ -4,6 +4,7 @@
 
 'use client'
 
+import { AlertTriangle } from 'lucide-react'
 import type { PendingApproval } from './useToolApproval'
 
 interface ApprovalDialogProps {
@@ -21,7 +22,10 @@ export function ApprovalDialog({ pending, onApprove, onDeny }: ApprovalDialogPro
   return (
     <div id="approval-dialog" className="settings-panel">
       <div className="settings-header">
-        <h2 className="settings-title">⚠ 위험 작업 승인</h2>
+        <h2 className="settings-title settings-title-danger">
+          <AlertTriangle size={18} strokeWidth={1.9} aria-hidden="true" />
+          위험 작업 승인
+        </h2>
       </div>
       <p className="settings-status">
         <strong>{request.toolName}</strong> — {request.description}
