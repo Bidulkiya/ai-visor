@@ -103,6 +103,36 @@ export function stripUnspeakableSymbols(text: string): string {
   return text.replace(UNSPEAKABLE_SYMBOL_PATTERN, '').replace(/[ \t]{2,}/g, ' ').trim()
 }
 
+/**
+ * 마크다운 인라인 기호를 음성에서 걷어낸다 — '보이는 텍스트(자막)'는 스트림 원본을
+ * 유지하고, 합성에는 이 결과만 넘긴다(이모지 필터와 같은 원리). 본문(설명·대화)은
+ * 보존하고, 읽으면 거슬리는 강조(**, *, _, ~)·인라인 코드(`)·제목(#)·인용(>)·
+ * 링크([텍스트](url))만 정리한다. 코드블록·목록·표는 줄 단위로 따로 처리한다(SpeechPlayer).
+ */
+const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*\]\([^)]*\)/g
+const MARKDOWN_LINK_PATTERN = /\[([^\]]*)\]\([^)]*\)/g
+const HEADING_PREFIX_PATTERN = /^\s*#{1,6}\s*/
+const BLOCKQUOTE_PREFIX_PATTERN = /^\s*>+\s?/
+// 강조용 밑줄(_기울임_, __굵게__)만 벗긴다 — snake_case 식별자는 단어 경계로 보호한다.
+// __dunder__(예: __init__)는 __굵게__와 구분 불가라 음성에선 내용만 남는다("이닛").
+// 기호("언더바")를 낭독하지 않는 게 목적이므로 의도된 절충이다 — 자막은 원본을 유지한다.
+const UNDERSCORE_EMPHASIS_PATTERN =
+  /(?<![\p{L}\p{N}_])_{1,2}(?=\S)([^_]+?)(?<=\S)_{1,2}(?![\p{L}\p{N}_])/gu
+// 별표·백틱·물결은 한국어 본문에 쓰임이 없어 전부 제거해도 안전하다.
+const INLINE_MARKDOWN_SYMBOLS_PATTERN = /[*`~]/g
+
+/** 한 조각(문장/줄)에서 음성에 부적합한 마크다운 인라인 기호를 정리한다. 순수 함수. */
+export function toSpeakableText(text: string): string {
+  const withoutInlineMarkdown = text
+    .replace(MARKDOWN_IMAGE_PATTERN, '')
+    .replace(MARKDOWN_LINK_PATTERN, '$1')
+    .replace(HEADING_PREFIX_PATTERN, '')
+    .replace(BLOCKQUOTE_PREFIX_PATTERN, '')
+    .replace(UNDERSCORE_EMPHASIS_PATTERN, '$1')
+    .replace(INLINE_MARKDOWN_SYMBOLS_PATTERN, '')
+  return stripUnspeakableSymbols(withoutInlineMarkdown)
+}
+
 export interface SentenceExtraction {
   sentences: string[]
   remainder: string
@@ -139,6 +169,46 @@ export function extractCompleteSentences(buffer: string): SentenceExtraction {
   return { sentences, remainder: buffer.slice(segmentStart) }
 }
 
+/**
+ * 줄 단위 마크다운 구조 분류 — 목록·코드펜스·표는 줄 단위 구조라 문장 분리로는 오인된다
+ * (특히 "1." 순서목록은 마침표가 문장 경계로 잘려 "일"로 읽힌다). 그래서 합성은 완성된
+ * '줄'을 보고 분류한 뒤, 산문 줄만 문장으로 쪼개 읽는다(SpeechPlayer).
+ */
+const CODE_FENCE_LINE_PATTERN = /^(`{3,}|~{3,})[A-Za-z0-9+#._-]*$/
+const LIST_ITEM_LINE_PATTERN = /^([-*+]\s+|\d+[.)]\s+)/
+const THEMATIC_BREAK_LINE_PATTERN = /^([-*_=])\1{2,}$/
+// 미완성 줄이 이 마커로 시작하면 산문이 아닐 수 있어 줄 완성까지 보류한다.
+// 숫자+마침표로 시작하는 줄(순서목록 "1." 또는 소수 "3.14")은 보류한다 — 줄이 완성되면
+// consumeLine이 통째로 읽어 소수가 "삼 점 일 사"로 정확히 발음된다(미리 쪼개면 "삼"+"십사"로 깨짐).
+const STRUCTURAL_LINE_START_PATTERN = /^\s*([-*+>|#`~]|\d+[.)])/
+
+/** 코드블록 펜스 줄(```/~~~, 언어 태그 허용) — 안의 내용은 음성에서 통째로 제외 */
+export function isCodeFenceLine(trimmedLine: string): boolean {
+  return CODE_FENCE_LINE_PATTERN.test(trimmedLine)
+}
+/** 목록 항목 줄(-, *, +, "1.", "1)") — 나열은 읽지 않고 화면 안내로 축약 */
+export function isListItemLine(trimmedLine: string): boolean {
+  return LIST_ITEM_LINE_PATTERN.test(trimmedLine)
+}
+/** 표 행 줄(| …) — 목록과 함께 화면 안내로 축약 */
+export function isTableRowLine(trimmedLine: string): boolean {
+  return trimmedLine.startsWith('|')
+}
+/** 구분선 줄(---, ***, ___, ===) — 음성에선 조용히 건너뛴다 */
+export function isThematicBreakLine(trimmedLine: string): boolean {
+  return THEMATIC_BREAK_LINE_PATTERN.test(trimmedLine)
+}
+/** 미완성 줄을 미리 문장 단위로 읽어도 되는가(산문 시작) — 구조 마커로 시작하면 보류 */
+export function startsLikeProse(incompleteLine: string): boolean {
+  if (incompleteLine.trim().length === 0) {
+    return false
+  }
+  return !STRUCTURAL_LINE_START_PATTERN.test(incompleteLine)
+}
+
+/** 목록·표를 음성으로 나열하는 대신 화면을 보게 안내하는 축약 문구(요구: 나열 방지) */
+const LIST_VOICE_SUBSTITUTE = '자세한 내용은 화면을 확인해 주세요.'
+
 export interface SpeechPlayer {
   attachToStream(stream: OutputStream): Unsubscribe
   /** 음소거 토글 — 끄면 진행 중 재생도 즉시 중단 */
@@ -163,6 +233,9 @@ export function createSpeechPlayer(options: SpeechPlayerOptions = {}): SpeechPla
   let isPlayerEnabled = true
   let turnStartedAt = 0
   let hasLoggedFirstByte = false
+  // 줄 단위 마크다운 상태 — 코드블록 안인지, 연속 목록 구간인지 (턴마다 hardCut에서 리셋)
+  let isInsideCodeBlock = false
+  let isInListRun = false
 
   // ── 직렬 재생 큐 ──
   // speak() 동시 호출 경로를 차단한다: 다음 문장은 이전 발화의 onEnd/onError에서만
@@ -218,18 +291,96 @@ export function createSpeechPlayer(options: SpeechPlayerOptions = {}): SpeechPla
     })
   }
 
-  function speakSentence(sentence: string): void {
+  /** 큐에 정리된 발화 1건을 넣고 재생을 펌프한다(이미 읽는 텍스트로 정리된 상태) */
+  function enqueueSpeakable(text: string): void {
     if (engine === null || !isPlayerEnabled) {
       return
     }
-    // 합성 직전 분리: 화면 자막은 원본(스트림)이고, 여기서는 읽는 텍스트만 만든다.
-    // 이모지를 걷어내고 발화할 내용이 없으면 그 조각은 합성을 건너뛴다.
-    const speakableText = stripUnspeakableSymbols(sentence)
+    sentenceQueue.push(text)
+    pumpQueue()
+  }
+
+  /**
+   * 산문 한 조각을 읽는 텍스트로 정리해 큐에 넣는다 — 화면 자막은 스트림 원본이고
+   * 여기서는 합성용만 만든다(R2 단일 스트림 유지). 비면 그 조각은 건너뛴다(기존 동작).
+   */
+  function enqueueProse(rawText: string): void {
+    const speakableText = toSpeakableText(rawText)
     if (!hasSpeakableContent(speakableText)) {
       return
     }
-    sentenceQueue.push(speakableText)
-    pumpQueue()
+    enqueueSpeakable(speakableText)
+  }
+
+  /** 목록/표 구간 시작에서 한 번만 화면 안내 문구를 읽는다(확장자·코드 나열 방지) */
+  function announceListOnce(): void {
+    if (isInListRun) {
+      return
+    }
+    isInListRun = true
+    enqueueSpeakable(LIST_VOICE_SUBSTITUTE)
+  }
+
+  /**
+   * 완성된 한 줄을 분류해 합성으로 보낸다. 코드블록 안은 통째로 제외하고, 목록·표는
+   * 화면 안내로 축약하며, 그 외(제목·인용·일반 산문)는 정리해 읽는다.
+   */
+  function consumeLine(line: string): void {
+    const trimmedLine = line.trim()
+    if (isCodeFenceLine(trimmedLine)) {
+      isInsideCodeBlock = !isInsideCodeBlock
+      isInListRun = false
+      return
+    }
+    if (isInsideCodeBlock) {
+      return
+    }
+    if (trimmedLine.length === 0 || isThematicBreakLine(trimmedLine)) {
+      isInListRun = false
+      return
+    }
+    if (isListItemLine(trimmedLine) || isTableRowLine(trimmedLine)) {
+      announceListOnce()
+      return
+    }
+    isInListRun = false
+    enqueueProse(line)
+  }
+
+  /** 버퍼에서 개행까지 완성된 줄들을 떼어 줄 단위로 합성한다 */
+  function flushCompletedLines(): void {
+    const lastNewlineIndex = pendingText.lastIndexOf('\n')
+    if (lastNewlineIndex < 0) {
+      return
+    }
+    const completedBlock = pendingText.slice(0, lastNewlineIndex)
+    pendingText = pendingText.slice(lastNewlineIndex + 1)
+    for (const line of completedBlock.split('\n')) {
+      consumeLine(line)
+    }
+  }
+
+  /**
+   * 미완성 줄이 산문이면 문장 단위로 미리 읽어 TTFB를 확보한다(기획서 §7). 목록·코드·표·
+   * 제목 등 구조 줄은 줄이 완성돼야 정확히 분류되므로 개행까지 보류한다.
+   */
+  function flushProseRemainder(): void {
+    if (isInsideCodeBlock || !startsLikeProse(pendingText)) {
+      return
+    }
+    const { sentences, remainder } = extractCompleteSentences(pendingText)
+    pendingText = remainder
+    sentences.forEach(enqueueProse)
+  }
+
+  /** 턴 종료 시 남은 미완성 줄을 줄 분류를 거쳐 마저 합성한다(끝까지 목록/코드면 안 읽음) */
+  function flushFinalRemainder(): void {
+    const finalLine = pendingText
+    pendingText = ''
+    if (finalLine.trim().length === 0) {
+      return
+    }
+    consumeLine(finalLine)
   }
 
   function hardCut(): void {
@@ -238,6 +389,9 @@ export function createSpeechPlayer(options: SpeechPlayerOptions = {}): SpeechPla
     sentenceQueue = []
     isSpeaking = false
     playbackGeneration += 1
+    // 줄 단위 마크다운 상태도 함께 리셋 — 이전 턴의 코드블록/목록 구간이 새 턴으로 새지 않게
+    isInsideCodeBlock = false
+    isInListRun = false
     engine?.cancelAll()
   }
 
@@ -251,17 +405,13 @@ export function createSpeechPlayer(options: SpeechPlayerOptions = {}): SpeechPla
         return
       case 'token': {
         pendingText += event.text
-        const { sentences, remainder } = extractCompleteSentences(pendingText)
-        pendingText = remainder
-        sentences.forEach(speakSentence)
+        // 완성된 줄을 먼저 줄 단위로 처리하고(목록·코드 정확 분류), 남은 산문은 미리 읽는다
+        flushCompletedLines()
+        flushProseRemainder()
         return
       }
       case 'turn-end': {
-        const finalSegment = pendingText.trim()
-        pendingText = ''
-        if (finalSegment.length > 0) {
-          speakSentence(finalSegment)
-        }
+        flushFinalRemainder()
         return
       }
       case 'turn-interrupted':
