@@ -22,6 +22,7 @@ import {
   type VadState,
 } from '../emotion/vad'
 import { describeVadForHumans } from '../emotion/describe'
+import { redactSecrets } from '../shared/redact'
 import type { SessionSummarizer } from '../memory/longTerm'
 import type { ExtractedFact, FactExtractor } from '../memory/facts'
 import type { RecentToolOperation } from '../memory/toolHistory'
@@ -41,6 +42,14 @@ const MAX_TOOL_ROUNDS = 16
 /** 라운드 상한 도달 시 마무리 요약을 유도하는 주입 메시지(도구 없이 호출) */
 const TOOL_ROUND_LIMIT_WRAPUP_PROMPT =
   '(작업 단계가 많아 여기서 멈춰요. 도구를 더 쓰지 말고, 지금까지 한 일과 남은 일을 사용자에게 짧게 정리해 주세요.)'
+
+/**
+ * 라이브 호출에 주입할 직전 대화 턴 수 상한 — "가까운 흐름"용(누가 무슨 말을 했는지).
+ * 멀리 지난 핵심 정보는 [이번 대화에서 알게 된 것](세션 사실)이 따로 들고 있으므로
+ * 이 윈도우는 흐름 유지에 필요한 만큼이면 된다. 일상 대화 한 턴은 짧아 10턴이어도
+ * 토큰 부담이 작다 — 체감 튜닝 대상.
+ */
+const RECENT_CONVERSATION_TURNS_LIMIT = 10
 
 // ── 도구 런타임 포트 (core가 정의, ui가 tools/로 구현 — §2 경계) ──
 
@@ -103,7 +112,13 @@ const SYSTEM_PROMPT_BASE = `나는 노아(Noa)다. 사용자의 AI 동반자 —
 /** llm이 시스템 프롬프트에 주입할 기억 — memory 모듈이 채워서 넘긴다 */
 export interface MemoryPromptContext {
   summary: string | null
+  /** 지난 세션들에서 영속된 사실 (이름·선호·약속 등) */
   facts: ReadonlyArray<ExtractedFact>
+  /**
+   * 이번 세션 도중 증분 추출된 핵심 사실 — 최근 N턴 윈도우 밖으로 밀려나도 유지할
+   * 정보(방금 알려준 이름·맥락 등). facts(지난 세션)와 역할이 다르다: 이쪽은 "이번 대화".
+   */
+  sessionFacts: ReadonlyArray<ExtractedFact>
   /**
    * 최근 도구 작업 이력(audit_log에서, 최신순) — "방금 옮긴 폴더" 같은 참조·제안용.
    * 제안·정확도에만 쓰인다. risk·게이트와 무관하다 (R5).
@@ -188,6 +203,14 @@ function appendMemorySections(sections: string[], memoryContext: MemoryPromptCon
   if (memoryContext.facts.length > 0) {
     sections.push('', '[알고 있는 것]')
     for (const fact of memoryContext.facts) {
+      sections.push(`- ${fact.key}: ${fact.value}`)
+    }
+  }
+  // 이번 대화에서 알게 된 것 — 최근 턴 윈도우 밖으로 밀려나도 유지할 핵심 정보. 가까운
+  // 흐름은 messages(직전 턴 원문)가, 먼 맥락이라도 잊으면 안 될 사실은 여기가 들고 있다.
+  if (memoryContext.sessionFacts.length > 0) {
+    sections.push('', '[이번 대화에서 알게 된 것 — 멀리 지난 맥락이라도 기억할 것]')
+    for (const fact of memoryContext.sessionFacts) {
       sections.push(`- ${fact.key}: ${fact.value}`)
     }
   }
@@ -332,6 +355,13 @@ export interface ClaudeProviderConfig {
   maxOutputTokens?: number
   /** 턴마다 기억(요약·사실)을 읽어 시스템 프롬프트에 주입 — memory 쪽이 구현을 제공 */
   loadMemoryContext?: () => Promise<MemoryPromptContext>
+  /**
+   * 현재 세션의 직전 대화 턴들(shortTerm) — session이 구현을 제공한다. 라이브 호출의
+   * messages에 시간순으로 주입해 멀티턴 흐름(끝말잇기 등)을 유지한다. 시스템 프롬프트의
+   * [기억](지난 세션 요약·사실)과 역할이 다르다: 이쪽은 이번 세션의 직전 원문 대화다.
+   * 미주입(테스트 등)이면 기존처럼 현재 메시지 한 개로만 호출한다.
+   */
+  loadConversationHistory?: () => readonly ConversationTurn[]
   /** 경량 모델 라우팅 (core/router.ts) — 메시지별로 모델을 고른다. 규칙 기반, LLM 호출 없음 */
   routeModel?: (message: Message) => RoutingDecision
   /** Layer 1 도구 (tools/) — 있으면 광고하고, 도구 호출은 게이트로만 실행 */
@@ -356,6 +386,36 @@ export function resolveTurnModel(config: ClaudeProviderConfig, message: Message)
     return { model: decision.model, decision }
   }
   return { model: config.model ?? DEFAULT_MODEL, decision: null }
+}
+
+/**
+ * 직전 대화 턴 + 현재 메시지로 API messages 배열을 만든다 (대화 맥락 복원).
+ * 순수 함수 — 단독 테스트 가능.
+ *
+ * - 최근 RECENT_CONVERSATION_TURNS_LIMIT턴만 시간순 user/assistant 쌍으로(토큰 상한).
+ * - API로 가는 대화(과거 턴 + 현재 메시지)에 일관되게 redact를 적용한다(시크릿 노출 0 — R7
+ *   방어). 로컬 저장(shortTerm)·화면 말풍선은 원문 그대로고, 외부 API 경계에서만 가린다.
+ * - 한쪽이라도 빈 턴(끼어들기 등)은 통째로 건너뛴다: user/assistant 교대가 깨지거나
+ *   빈 content가 API에 가지 않게.
+ * - 현재 메시지는 마지막 user로 둔다. 같은 턴 내 도구 왕복(assistant/tool_result)은
+ *   호출부가 이 배열 뒤에 push하므로 기존 구조가 보존된다.
+ */
+export function buildConversationFromHistory(
+  recentTurns: readonly ConversationTurn[],
+  currentText: string,
+): Anthropic.MessageParam[] {
+  const messages: Anthropic.MessageParam[] = []
+  for (const turn of recentTurns.slice(-RECENT_CONVERSATION_TURNS_LIMIT)) {
+    const userText = redactSecrets(turn.userText).trim()
+    const assistantText = redactSecrets(turn.assistantText).trim()
+    if (userText.length === 0 || assistantText.length === 0) {
+      continue
+    }
+    messages.push({ role: 'user', content: userText })
+    messages.push({ role: 'assistant', content: assistantText })
+  }
+  messages.push({ role: 'user', content: redactSecrets(currentText) })
+  return messages
 }
 
 /** 기억 로딩 실패가 대화를 막으면 안 된다 — 실패 시 기억 없이 진행 */
@@ -516,7 +576,14 @@ export function createClaudeTurnProvider(config: ClaudeProviderConfig): LlmTurnP
 
       // 다단계 도구 체이닝 루프 (R4: 실행은 toolRuntime.invoke=게이트로만, 블록마다 개별).
       // 도구가 없으면 1라운드로 끝나 기존 동작과 동일하다. 끼어들기 시 즉시 중단.
-      const conversation: Anthropic.MessageParam[] = [{ role: 'user', content: message.text }]
+      // 직전 대화 턴을 앞에 주입해 멀티턴 맥락을 유지한다 — shortTerm은 이 시점에
+      // 아직 현재 턴이 없으므로(턴 종료 후 기록) getTurns()는 정확히 "이전 턴들"이다.
+      const recentTurns = config.loadConversationHistory?.() ?? []
+      const conversation: Anthropic.MessageParam[] = buildConversationFromHistory(
+        recentTurns,
+        message.text,
+      )
+      console.log(`[llm] history: ${(conversation.length - 1) / 2}턴 주입 (보유 ${recentTurns.length}턴)`)
       // 작업이 LLM의 최종 답변(도구 없는 응답)으로 끝났는가 — 거짓이면 라운드 상한 도달
       let completedWithoutTools = false
       try {

@@ -126,3 +126,68 @@ export function createFactStore(database: MemoryDatabase): FactStore {
 
   return { upsertFact, getFact, getAllFacts, extractAndStoreFacts }
 }
+
+/**
+ * 세션 내 핵심 사실 — 휘발성 세션 캐시 (shortTerm과 같은 결).
+ *
+ * 대화 도중 증분 추출된 사실을 메모리에 누적해, 최근 N턴 윈도우 밖으로 밀려난
+ * 정보("고양이 이름 루키" 등)도 세션 내내 시스템 프롬프트에 유지하게 한다.
+ * DB에 쓰지 않는다 — 영속(다음 세션 이어받기)은 종료 시 전체 추출이 담당한다.
+ * 같은 key는 최신 값으로 합쳐(중복 누적 방지) redact·검증은 factStore와 같은 정책(normalizeFact).
+ */
+export interface SessionFactStore {
+  merge(facts: readonly ExtractedFact[]): void
+  getAll(): ExtractedFact[]
+}
+
+/**
+ * 세션 사실에서 지난 세션 사실과 완전히 같은(key+value) 항목을 뺀다 — 중복 노출 최소화 (R3 역할 분리).
+ * 값이 이번 세션에 갱신된 항목(같은 key·다른 value)은 남겨 최신 값이 "이번 대화" 섹션에 드러나게 한다.
+ */
+export function excludeFactsAlreadyKnown(
+  sessionFacts: readonly ExtractedFact[],
+  priorFacts: readonly ExtractedFact[],
+): ExtractedFact[] {
+  return sessionFacts.filter(
+    (sessionFact) =>
+      !priorFacts.some(
+        (priorFact) => priorFact.key === sessionFact.key && priorFact.value === sessionFact.value,
+      ),
+  )
+}
+
+/**
+ * 세션 사실 상한 — 토큰 폭증·key 변이 누적 방지선. 초과 시 가장 오래전 언급된 것부터 버린다.
+ * 한 세션의 지속적 사실(이름·선호·진행 맥락)은 보통 이 수보다 적다 — 안전 상한. 체감 튜닝 대상.
+ */
+export const MAX_SESSION_FACTS = 40
+
+export function createSessionFactStore(): SessionFactStore {
+  // 삽입 순서 = 언급 최신순(갱신 시 재삽입으로 끝으로 이동). 상한 초과 시 맨 앞(오래됨)을 축출.
+  const valueByKey = new Map<string, string>()
+  return {
+    merge(facts: readonly ExtractedFact[]): void {
+      for (const fact of facts) {
+        const normalized = normalizeFact(fact)
+        if (normalized !== null) {
+          // 같은 key는 최신 값으로 갱신하되 재삽입해 "최근 언급" 위치로 올린다(축출 우선순위용)
+          valueByKey.delete(normalized.key)
+          valueByKey.set(normalized.key, normalized.value)
+        }
+      }
+      // 상한 초과분은 가장 오래전 언급된 key부터 버린다 — LLM key 변이로 무한 증식하지 않게
+      while (valueByKey.size > MAX_SESSION_FACTS) {
+        const oldestKey = valueByKey.keys().next().value
+        if (oldestKey === undefined) {
+          break
+        }
+        valueByKey.delete(oldestKey)
+      }
+    },
+    getAll(): ExtractedFact[] {
+      return [...valueByKey.entries()]
+        .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
+        .map(([key, value]) => ({ key, value }))
+    },
+  }
+}

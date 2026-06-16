@@ -46,9 +46,17 @@ import {
   type SessionSummarizer,
   type StartupContext,
 } from '../memory/longTerm'
-import { createFactStore, type FactExtractor, type FactStore } from '../memory/facts'
+import {
+  createFactStore,
+  createSessionFactStore,
+  excludeFactsAlreadyKnown,
+  type FactExtractor,
+  type FactStore,
+  type SessionFactStore,
+} from '../memory/facts'
 import { createToolHistoryReader, type ToolHistoryReader } from '../memory/toolHistory'
 import { createIpcSqliteDriver, type DatabaseBridge } from '../memory/ipcDriver'
+import { redactSecrets } from '../shared/redact'
 
 export type SendMessageResult =
   | TurnResult
@@ -89,9 +97,44 @@ export interface CompanionSessionOptions {
 /** 유휴 감쇠 틱 주기 — 이 간격마다 실제 경과 시간만큼 중립으로 끌어당긴다 */
 const DECAY_TICK_INTERVAL_MS = 5000
 
+/**
+ * 세션 핵심 사실 증분 추출 주기(턴 수). 매 턴은 과하므로(LLM 호출 비용) 몇 턴마다 돈다.
+ * 정보가 최근 턴 윈도우(llm RECENT_CONVERSATION_TURNS_LIMIT) 밖으로 밀려나기 전에 잡도록
+ * 윈도우보다 작게 둔다.
+ */
+const SESSION_FACT_EXTRACTION_INTERVAL_TURNS = 6
+/** 증분 추출 윈도우 겹침 — 여러 턴에 나뉜 사실이 경계에서 누락되지 않게 직전 추출분과 겹쳐 본다 */
+const SESSION_FACT_EXTRACTION_OVERLAP_TURNS = 2
+
+export interface SessionFactExtractionPlan {
+  shouldExtract: boolean
+  /** 추출할 때 shortTerm.getTurns()를 이 인덱스부터 슬라이스한다(직전 추출분과 겹침 포함) */
+  windowStart: number
+}
+
+/**
+ * 세션 사실 증분 추출의 시점·윈도우를 정하는 순수 함수 (DB 없이 테스트 가능).
+ * 직전 추출 이후 INTERVAL턴 이상 쌓였을 때만 추출하고, 윈도우는 OVERLAP만큼 겹쳐 본다.
+ * INTERVAL < 최근 턴 윈도우(llm)이므로 정보가 윈도우 밖으로 밀려나기 전에 잡힌다.
+ */
+export function planSessionFactExtraction(
+  turnCount: number,
+  extractedUpTo: number,
+): SessionFactExtractionPlan {
+  if (turnCount - extractedUpTo < SESSION_FACT_EXTRACTION_INTERVAL_TURNS) {
+    return { shouldExtract: false, windowStart: extractedUpTo }
+  }
+  return {
+    shouldExtract: true,
+    windowStart: Math.max(0, extractedUpTo - SESSION_FACT_EXTRACTION_OVERLAP_TURNS),
+  }
+}
+
 export function createCompanionSession(options: CompanionSessionOptions): CompanionSession {
   const outputStream = createOutputStream()
   const shortTerm = createShortTermMemory()
+  // 세션 핵심 사실(휘발) — 대화 도중 증분 누적해 윈도우 밖 정보를 유지하는 두 번째 기억층
+  const sessionFactStore: SessionFactStore = createSessionFactStore()
 
   let database: MemoryDatabase | null = null
   let longTerm: LongTermMemory | null = null
@@ -106,6 +149,9 @@ export function createCompanionSession(options: CompanionSessionOptions): Compan
   let detachAffection: Unsubscribe | null = null
   /** 기억 0의 첫 실행 여부 — start()에서 확정, 자기상태 주입에 쓰인다 */
   let isFirstRunSession = false
+  /** 세션 사실 증분 추출 상태 — 추출을 마친 턴 수 + 중복 실행 방지 가드 */
+  let sessionFactsExtractedUpTo = 0
+  let isExtractingSessionFacts = false
 
   // 세션의 정식 감정 상태 — engine이 발행한 원시 VAD를 스무딩해 보유 (CLAUDE.md §2)
   outputStream.subscribe((event) => {
@@ -119,7 +165,7 @@ export function createCompanionSession(options: CompanionSessionOptions): Compan
 
   async function loadMemoryContext(): Promise<MemoryPromptContext> {
     if (longTerm === null || factStore === null) {
-      return { summary: null, facts: [], recentToolOperations: [] }
+      return { summary: null, facts: [], sessionFacts: [], recentToolOperations: [] }
     }
     // 도구 이력은 보조 맥락 — 없거나 실패해도(reader null·빈 로그) 기억은 정상 로드된다
     const recentOperationsPromise =
@@ -131,7 +177,9 @@ export function createCompanionSession(options: CompanionSessionOptions): Compan
       factStore.getAllFacts(),
       recentOperationsPromise,
     ])
-    return { summary: startupContext.latestSummary, facts, recentToolOperations }
+    // 이번 세션 사실 중 지난 세션 사실과 완전히 같은 항목은 빼 중복 노출을 줄인다 (R3 역할 분리)
+    const sessionFacts = excludeFactsAlreadyKnown(sessionFactStore.getAll(), facts)
+    return { summary: startupContext.latestSummary, facts, sessionFacts, recentToolOperations }
   }
 
   /**
@@ -157,11 +205,50 @@ export function createCompanionSession(options: CompanionSessionOptions): Compan
       routeModel,
       ...options.llm,
       loadMemoryContext,
+      // 직전 대화 턴을 라이브 호출에 주입(멀티턴 맥락). 호출 시점에 현재 턴은 아직
+      // 기록 전이라 getTurns()는 "이전 턴들"이다 — shortTerm은 로컬·휘발(R6).
+      loadConversationHistory: () => shortTerm.getTurns(),
       toolRuntime: options.toolRuntime,
       getRuntimeState,
     })
   const summarize = options.overrides?.summarize ?? createSessionSummarizer(options.llm)
   const extractFacts = options.overrides?.extractFacts ?? createFactExtractor(options.llm)
+
+  /**
+   * 세션 핵심 사실 증분 추출 (대화 도중) — 비차단·실패 무해 (두 번째 기억층).
+   * N턴마다, 직전 추출 이후의 새 턴(+겹침)에서 사실을 뽑아 sessionFactStore에 누적한다.
+   * 이로써 최근 턴 윈도우 밖으로 밀려난 정보("고양이 이름 루키" 등)도 세션 내내 유지된다.
+   * 추출에 보내는 대화는 redact해 시크릿을 외부 API로 보내지 않는다 (R7).
+   */
+  async function maybeExtractSessionFacts(): Promise<void> {
+    if (isExtractingSessionFacts) {
+      return
+    }
+    const turnCount = shortTerm.getTurnCount()
+    const plan = planSessionFactExtraction(turnCount, sessionFactsExtractedUpTo)
+    if (!plan.shouldExtract) {
+      return
+    }
+    isExtractingSessionFacts = true
+    const windowTurns = shortTerm.getTurns().slice(plan.windowStart)
+    try {
+      const redactedTurns = windowTurns.map((turn) => ({
+        userText: redactSecrets(turn.userText),
+        assistantText: redactSecrets(turn.assistantText),
+        timestamp: turn.timestamp,
+      }))
+      sessionFactStore.merge(await extractFacts(redactedTurns))
+      // 성공한 뒤에만 진행점을 올린다 — 실패 시 값이 그대로라 다음 주기에 같은 윈도우를
+      // 전부 재시도한다(추출 못 한 윈도우를 영구히 건너뛰지 않게).
+      sessionFactsExtractedUpTo = turnCount
+      console.log(`[memory] 세션 사실 ${sessionFactStore.getAll().length}건 (이번 대화 누적)`)
+    } catch (error) {
+      // 실패해도 대화·다음 주기를 막지 않는다 — 종료 시 전체 추출이 빠진 사실을 메운다
+      console.error('[session.maybeExtractSessionFacts]: 세션 사실 추출 실패 — 무시:', error)
+    } finally {
+      isExtractingSessionFacts = false
+    }
+  }
 
   let engine: ReturnType<typeof createConversationEngine> | null = null
   let decayTimerId: ReturnType<typeof setInterval> | null = null
@@ -228,7 +315,11 @@ export function createCompanionSession(options: CompanionSessionOptions): Compan
     const turnPromise = engine.runTurn(normalized.message)
     activeTurnPromise = turnPromise
     try {
-      return await turnPromise
+      const result = await turnPromise
+      // 턴이 끝나(기록된) 뒤 세션 핵심 사실을 증분 추출한다 — 비차단(응답 지연 0).
+      // 주기·중복은 maybeExtractSessionFacts가 게이트하므로 매 턴 불러도 안전하다.
+      void maybeExtractSessionFacts()
+      return result
     } finally {
       if (activeTurnPromise === turnPromise) {
         activeTurnPromise = null
