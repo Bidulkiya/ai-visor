@@ -1,7 +1,7 @@
 /**
  * 경량 모델 라우팅 (기획서 §1 +1, §9 재활용 자산)
  *
- * 사용자 메시지를 보고 빠른 모델(haiku급)과 느린 모델(opus급) 중 하나를 고른다.
+ * 사용자 메시지를 보고 빠른 모델(sonnet급)과 느린 모델(opus급) 중 하나를 고른다.
  * 판단은 LLM 호출 없이 규칙 기반(길이·키워드·문장 구조)이다 — 라우팅을 위해
  * LLM을 또 부르면 단일 호출 합치기(CLAUDE.md §2, 딜레이 0)와 충돌한다.
  *
@@ -20,9 +20,13 @@ export interface RoutingDecision {
   reason: string
 }
 
-/** 빠른 모델 — 인사·감정 반응·단순 질문용 */
-export const FAST_MODEL_ID = 'claude-haiku-4-5'
-/** 느린 모델 — 복잡한 추론·작업 수행용 (현재 기본 모델과 동일) */
+/**
+ * 빠른 모델 — 짧은·일상 발화용. 이전엔 Haiku였으나, 짧은 발화의 맥락 추론·규칙 적용·
+ * "도구 쓸 상황인지" 판단이 헐거워지는 문제로 Sonnet으로 상향한다(가벼움=Sonnet, 무거움=Opus).
+ * 모델 ID는 정규 alias 그대로 — 날짜 접미사를 붙이지 않는다.
+ */
+export const FAST_MODEL_ID = 'claude-sonnet-4-6'
+/** 느린 모델 — 복잡한 추론·작업 수행용 (llm.ts 기본 모델과 동일) */
 export const SLOW_MODEL_ID = 'claude-opus-4-8'
 
 /** 이 길이를 넘으면 보통 맥락 있는 요청 — 한국어 기준 토큰 수의 근사치 */
