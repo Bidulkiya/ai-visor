@@ -7,17 +7,23 @@
 
 import { app, dialog, ipcMain } from 'electron'
 import { IPC_CHANNELS, type SidecarExtractResult } from '../ipc/channels'
-import { createSidecarManager, validatePptxPath } from './manager'
+import { createSidecarManager, validateDocumentPath } from './manager'
 
 export function registerSidecarHost(): void {
   const manager = createSidecarManager()
 
-  // 네이티브 파일 선택 — 사용자가 고른 .pptx 경로만 신뢰 경계를 넘는다
-  ipcMain.handle(IPC_CHANNELS.sidecarPickPptx, async (): Promise<string | null> => {
+  // 네이티브 파일 선택 — 사용자가 고른 지원 문서 경로만 신뢰 경계를 넘는다(HWP는 목록에 없음)
+  ipcMain.handle(IPC_CHANNELS.sidecarPickDocument, async (): Promise<string | null> => {
     const result = await dialog.showOpenDialog({
-      title: '발표할 PPTX 파일 선택',
+      title: '열 문서 선택 (PDF·Word·PowerPoint·텍스트·마크다운)',
       properties: ['openFile'],
-      filters: [{ name: 'PowerPoint 발표', extensions: ['pptx'] }],
+      filters: [
+        { name: '문서', extensions: ['pdf', 'docx', 'pptx', 'txt', 'md', 'markdown'] },
+        { name: 'PDF', extensions: ['pdf'] },
+        { name: 'Word', extensions: ['docx'] },
+        { name: 'PowerPoint', extensions: ['pptx'] },
+        { name: '텍스트·마크다운', extensions: ['txt', 'md', 'markdown'] },
+      ],
     })
     if (result.canceled || result.filePaths.length === 0) {
       return null
@@ -26,16 +32,16 @@ export function registerSidecarHost(): void {
   })
 
   ipcMain.handle(
-    IPC_CHANNELS.sidecarExtractDeck,
-    async (_event, pptxPath: unknown): Promise<SidecarExtractResult> => {
-      if (typeof pptxPath !== 'string') {
+    IPC_CHANNELS.sidecarExtractDocument,
+    async (_event, documentPath: unknown): Promise<SidecarExtractResult> => {
+      if (typeof documentPath !== 'string') {
         return { status: 'failed', message: '잘못된 파일 경로입니다.' }
       }
-      const validation = validatePptxPath(pptxPath)
+      const validation = validateDocumentPath(documentPath)
       if (!validation.ok) {
         return { status: 'failed', message: validation.reason }
       }
-      return manager.extractDeck(validation.resolved)
+      return manager.extractDocument(validation.resolved)
     },
   )
 

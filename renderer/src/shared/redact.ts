@@ -10,6 +10,13 @@ const SECRET_PATTERNS: ReadonlyArray<RegExp> = [
   /sk-ant-[A-Za-z0-9_-]+/g,
   /sk-[A-Za-z0-9_-]{16,}/g,
   /(api[_-]?key|token|password|secret)\s*[=:]\s*\S+/gi,
+  // 아래는 형식이 명확해 오탐이 거의 없는 시크릿들 — 문서 등 외부 내용에서도 가린다.
+  // 개인키 PEM 블록(여러 줄)은 통째로 가린다.
+  /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g,
+  /\b(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{20,}/g, // GitHub 토큰
+  /\bAKIA[0-9A-Z]{16}\b/g, // AWS 액세스 키 ID
+  /\bAIza[0-9A-Za-z_-]{35}\b/g, // Google API 키
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}/g, // Slack 토큰
 ]
 const REDACTED_PLACEHOLDER = '[가림]'
 

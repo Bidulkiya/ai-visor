@@ -52,6 +52,50 @@ export function buildSearchQuery(slide: Slide): string | null {
   return query.length > 0 ? query : null
 }
 
+/** 검색어 대상으로 삼을 앞쪽 구획 제목 수 — 문서 전체 주제 조사용 */
+const DOCUMENT_TOPIC_TITLE_COUNT = 8
+
+/**
+ * 문서 전체 주제를 한 번만 조사한다(구획별이 아니라 문서 단위) — 이해 모드용.
+ * 구획이 수백 개일 수 있어 per-구획 검색은 과하므로, 문서를 대표하는 합성 슬라이드
+ * (출처명 + 앞 구획 제목들)로 검색어를 만들어 search_web을 1회 호출한다.
+ * toolRuntime이 null이거나 실패하면 null — 이해·요약은 조사 없이도 진행한다.
+ */
+export async function researchDocumentTopic(
+  deck: SlideDeck,
+  toolRuntime: ToolRuntime | null,
+): Promise<string | null> {
+  if (toolRuntime === null) {
+    return null
+  }
+  const representativeSlide: Slide = {
+    number: 0,
+    title: deck.sourceName,
+    bodyText: deck.slides
+      .slice(0, DOCUMENT_TOPIC_TITLE_COUNT)
+      .map((slide) => slide.title)
+      .filter((title) => title.length > 0)
+      .join(' '),
+    speakerNotes: '',
+    imageDataUrl: null,
+  }
+  const query = buildSearchQuery(representativeSlide)
+  if (query === null) {
+    return null
+  }
+  try {
+    const result = await toolRuntime.invoke(SEARCH_TOOL_NAME, { query })
+    if (!result.isSuccess || result.output.trim().length === 0) {
+      console.error('[preResearch.researchDocumentTopic]: 검색 실패 — 조사 없이 진행:', result.output)
+      return null
+    }
+    return result.output.trim().slice(0, RESEARCH_SUMMARY_MAX_LENGTH)
+  } catch (error) {
+    console.error('[preResearch.researchDocumentTopic]: 검색 예외 — 조사 없이 진행:', error)
+    return null
+  }
+}
+
 export interface PreResearchProgress {
   completedSlides: number
   totalSlides: number

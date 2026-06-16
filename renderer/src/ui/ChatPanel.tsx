@@ -27,16 +27,32 @@ interface ChatPanelProps {
   messages: readonly ChatMessage[]
   isThinking: boolean
   isDisabled: boolean
-  onSend(text: string): void
+  /**
+   * 입력을 현재 모드로 라우팅한다(문서 질문/청중 질문/일반 채팅 — page.tsx가 분기).
+   * 수락되면 null, 거부(읽는 중·답하는 중 등)면 안내 문구를 반환한다 → 입력을 보존하고 문구를 보인다.
+   */
+  onSend(text: string): string | null
   onInterrupt(): void
   voice: VoiceControls
+  /** 입력창 placeholder — 모드에 따라 다른 문구(문서 질문/청중 질문/일반) */
+  placeholder: string
 }
 
 /** 이 거리(px) 안에 있으면 "맨 아래를 보는 중"으로 간주해 자동 스크롤한다 */
 const AUTO_SCROLL_THRESHOLD_PX = 80
 
-export function ChatPanel({ messages, isThinking, isDisabled, onSend, onInterrupt, voice }: ChatPanelProps) {
+export function ChatPanel({
+  messages,
+  isThinking,
+  isDisabled,
+  onSend,
+  onInterrupt,
+  voice,
+  placeholder,
+}: ChatPanelProps) {
   const [draftText, setDraftText] = useState('')
+  /** 입력이 거부됐을 때(읽는 중·답하는 중 등)의 안내 — 보내지면 비운다 */
+  const [sendNotice, setSendNotice] = useState('')
   const messageListRef = useRef<HTMLDivElement | null>(null)
   const isNearBottomRef = useRef(true)
 
@@ -56,14 +72,26 @@ export function ChatPanel({ messages, isThinking, isDisabled, onSend, onInterrup
     }
   }, [messages])
 
+  // 모드(placeholder)가 바뀌면(문서 읽는중→준비됨, 문서 닫힘 등) 이전 모드의 거부 안내는
+  // 더 이상 맞지 않으니 정리한다 — 묵은 sendNotice가 모드 전환을 넘어 남지 않게(상태 누수 방지).
+  useEffect(() => {
+    setSendNotice('')
+  }, [placeholder])
+
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
     const text = draftText.trim()
     if (text.length === 0 || isDisabled) {
       return
     }
-    setDraftText('')
-    onSend(text)
+    const notice = onSend(text)
+    if (notice === null) {
+      setDraftText('')
+      setSendNotice('')
+    } else {
+      // 거부됨(문서 읽는 중·답하는 중 등) — 입력을 지우지 않고 안내만 보여 다시 보낼 수 있게 한다
+      setSendNotice(notice)
+    }
   }
 
   return (
@@ -88,6 +116,7 @@ export function ChatPanel({ messages, isThinking, isDisabled, onSend, onInterrup
       </div>
 
       {voice.voiceNotice.length > 0 && <p className="voice-notice">{voice.voiceNotice}</p>}
+      {sendNotice.length > 0 && <p className="chat-send-notice">{sendNotice}</p>}
 
       <form className="chat-input-row" onSubmit={handleSubmit}>
         <input
@@ -95,9 +124,14 @@ export function ChatPanel({ messages, isThinking, isDisabled, onSend, onInterrup
           className="chat-input"
           type="text"
           value={draftText}
-          placeholder={isDisabled ? '연결 중…' : '메시지를 입력하세요'}
+          placeholder={isDisabled ? '연결 중…' : placeholder}
           disabled={isDisabled}
-          onChange={(event) => setDraftText(event.target.value)}
+          onChange={(event) => {
+            setDraftText(event.target.value)
+            if (sendNotice.length > 0) {
+              setSendNotice('')
+            }
+          }}
         />
         <button
           id="voice-talk"

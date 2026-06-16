@@ -500,6 +500,13 @@ body::after {
   cursor: help;
 }
 
+/* 입력이 거부됐을 때(문서 읽는 중·답하는 중 등)의 안내 — 입력 행 위에 차분히 */
+.chat-send-notice {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+}
+
 /* ── 입력 행 ── */
 .chat-input-row {
   display: flex;

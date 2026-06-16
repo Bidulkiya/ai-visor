@@ -14,11 +14,21 @@
 import { app } from 'electron'
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
-import { openSync, closeSync, existsSync, lstatSync } from 'node:fs'
+import { openSync, closeSync, existsSync, lstatSync, statSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
-import type { SidecarExtractResult, SidecarSlide } from '../ipc/channels'
+import type { SidecarExtractResult, SidecarSlide, SupportedDocumentType } from '../ipc/channels'
 import { isSensitivePath } from '../security/sensitivePaths'
+
+/** 열 수 있는 문서 확장자 → 타입. 여기 없는 확장자(.hwp 등)는 거부한다(심층 방어) */
+const SUPPORTED_DOCUMENT_EXTENSIONS: Readonly<Record<string, SupportedDocumentType>> = {
+  '.pptx': 'pptx',
+  '.pdf': 'pdf',
+  '.docx': 'docx',
+  '.txt': 'txt',
+  '.md': 'md',
+  '.markdown': 'md',
+}
 
 const HOST = '127.0.0.1'
 /** 기동 후 /health 가 응답할 때까지의 한도 — Python 인터프리터 콜드스타트 여유 */
@@ -30,6 +40,8 @@ const EXTRACT_TIMEOUT_MS = 120000
 const PROBE_TIMEOUT_MS = 5000
 /** 프로즌 사이드카 실행 파일 이름(PyInstaller 산출물) */
 const FROZEN_EXECUTABLE_NAME = 'ai-visor-sidecar.exe'
+/** 파싱 전에 거부할 문서 크기 상한 — 거대 파일의 메모리 폭주 방지(사이드카와 같은 값) */
+const MAX_DOCUMENT_BYTES = 200 * 1024 * 1024
 
 export interface SidecarStatus {
   isRunning: boolean
@@ -43,13 +55,13 @@ export interface SidecarManager {
   /** 프로세스 종료 + 로그 핸들 정리. 앱 종료 훅에서 반드시 호출 */
   stop(): Promise<void>
   // waitUntilReady·status는 사이드카 생명주기 계약의 일부다(골격에서 정의).
-  // 지금 extractDeck은 내부에서 준비 상태를 다루지만, 스트리밍 사이드카(+1 STT)는
+  // 지금 extractDocument은 내부에서 준비 상태를 다루지만, 스트리밍 사이드카(+1 STT)는
   // "준비됨"을 폴링해야 하므로 이 표면을 계약으로 유지한다.
   /** 소켓/포트 바인딩 폴링. 시간 내 준비 안 되면 false */
   waitUntilReady(timeoutMs: number): Promise<boolean>
   status(): SidecarStatus
-  /** 게으른 시작 + 준비 대기 후 PPTX 추출. 어떤 실패도 결과 객체로 보고(throw 없음) */
-  extractDeck(pptxPath: string): Promise<SidecarExtractResult>
+  /** 게으른 시작 + 준비 대기 후 문서 추출. 어떤 실패도 결과 객체로 보고(throw 없음) */
+  extractDocument(documentPath: string): Promise<SidecarExtractResult>
 }
 
 type SidecarLaunch =
@@ -171,7 +183,7 @@ export function createSidecarManager(): SidecarManager {
   let isReady = false
   /** 동시 start 호출이 두 프로세스를 띄우지 않게 진행 중 시작을 공유한다 */
   let startInFlight: Promise<void> | null = null
-  /** 시작 불가 사유 — extractDeck이 사용자에게 그대로 전달 */
+  /** 시작 불가 사유 — extractDocument이 사용자에게 그대로 전달 */
   let unavailableMessage: string | null = null
 
   function authHeaders(): Record<string, string> {
@@ -290,7 +302,7 @@ export function createSidecarManager(): SidecarManager {
     return pollHealth(timeoutMs)
   }
 
-  async function extractDeck(pptxPath: string): Promise<SidecarExtractResult> {
+  async function extractDocument(documentPath: string): Promise<SidecarExtractResult> {
     await start()
     if (child === null || !isReady) {
       return { status: 'unavailable', message: unavailableMessage ?? '사이드카를 시작하지 못했습니다.' }
@@ -301,13 +313,14 @@ export function createSidecarManager(): SidecarManager {
         {
           method: 'POST',
           headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pptxPath, render: true }),
+          body: JSON.stringify({ path: documentPath, render: true }),
         },
         EXTRACT_TIMEOUT_MS,
       )
       const payload = (await response.json()) as {
         error?: string
         sourceName?: string
+        docType?: SupportedDocumentType
         slides?: SidecarSlide[]
         renderStatus?: string
         renderMessage?: string | null
@@ -317,9 +330,10 @@ export function createSidecarManager(): SidecarManager {
       }
       return {
         status: 'ok',
-        sourceName: payload.sourceName ?? 'PPTX 발표',
+        sourceName: payload.sourceName ?? '문서',
+        docType: payload.docType ?? 'txt',
         slides: payload.slides ?? [],
-        // 렌더 실패(이미지 없음)는 발표를 막지 않으므로 ok에 안내 문구로만 전달
+        // 렌더 실패(이미지 없음)는 진행을 막지 않으므로 ok에 안내 문구로만 전달
         renderNotice:
           payload.renderStatus !== undefined && payload.renderStatus !== 'ok' && payload.renderStatus !== 'skipped'
             ? payload.renderMessage ?? null
@@ -327,7 +341,7 @@ export function createSidecarManager(): SidecarManager {
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
-      console.error('[sidecar.extractDeck]: 추출 요청 실패:', detail)
+      console.error('[sidecar.extractDocument]: 추출 요청 실패:', detail)
       return { status: 'failed', message: `사이드카 추출에 실패했습니다: ${detail}` }
     }
   }
@@ -337,12 +351,15 @@ export function createSidecarManager(): SidecarManager {
     stop,
     waitUntilReady,
     status: (): SidecarStatus => ({ isRunning: child !== null, isReady }),
-    extractDeck,
+    extractDocument,
   }
 }
 
-/** PPTX 경로 검증 — 절대경로 + 존재 + 심볼릭 링크 차단 + 확장자 .pptx (read-only 파싱) */
-export function validatePptxPath(
+/**
+ * 문서 경로 검증 — 절대경로 + 존재 + 심볼릭 링크 차단 + 지원 확장자(pptx/pdf/docx/txt/md)
+ * + 민감 경로 차단 (read-only 파싱). HWP 등 미지원 확장자는 여기서 거부한다(심층 방어).
+ */
+export function validateDocumentPath(
   filePath: string,
 ): { ok: true; resolved: string } | { ok: false; reason: string } {
   if (!path.isAbsolute(filePath)) {
@@ -355,8 +372,12 @@ export function validatePptxPath(
   if (lstatSync(resolved).isSymbolicLink()) {
     return { ok: false, reason: '심볼릭 링크는 허용되지 않습니다.' }
   }
-  if (path.extname(resolved).toLowerCase() !== '.pptx') {
-    return { ok: false, reason: '.pptx 파일만 열 수 있습니다.' }
+  if (!(path.extname(resolved).toLowerCase() in SUPPORTED_DOCUMENT_EXTENSIONS)) {
+    return { ok: false, reason: 'PDF·DOCX·PPTX·TXT·MD 파일만 열 수 있어요.' }
+  }
+  // 거대 파일은 파싱 전에 거부한다(메모리 폭주 방지) — 사이드카도 같은 상한을 재확인한다
+  if (statSync(resolved).size > MAX_DOCUMENT_BYTES) {
+    return { ok: false, reason: `문서가 너무 커요(최대 ${MAX_DOCUMENT_BYTES / (1024 * 1024)}MB).` }
   }
   // 도구(toolHost)와 같은 방어선 — 자격증명·시스템 경로의 파일은 열지 않는다(심층 방어)
   if (isSensitivePath(resolved)) {

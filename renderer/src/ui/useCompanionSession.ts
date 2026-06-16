@@ -46,6 +46,11 @@ export interface CompanionSessionView {
   toolRuntime: ToolRuntime | null
   /** 채팅 입력과 음성 입력 모두 이 관문으로 — source만 다르다 (R1) */
   sendMessage(text: string, source?: 'chat' | 'voice'): Promise<void>
+  /**
+   * 사용자 말풍선만 화면에 추가한다(전송은 안 함) — 문서·발표 질문은 본체에 증강 프롬프트로
+   * 주입되어 말풍선이 안 남으므로, 통합된 메인 채팅에 사용자 질문을 보이게 할 때 쓴다(표시 전용).
+   */
+  appendUserMessage(text: string): void
   interrupt(): void
 }
 
@@ -92,6 +97,15 @@ export function useCompanionSession(requestApproval: ApprovalRequester): Compani
   const removeMessage = useCallback((messageId: number): void => {
     setMessages((previous) => previous.filter((message) => message.id !== messageId))
   }, [])
+
+  // 문서·발표 질문은 본체에 증강 프롬프트로 주입돼 사용자 말풍선이 안 남는다 — 통합 채팅에서
+  // 사용자가 친 질문을 보이게 표시만 더한다(전송·기억은 컨트롤러의 주입이 담당, 여기는 표시 전용).
+  const appendUserMessage = useCallback(
+    (text: string): void => {
+      appendMessage({ role: 'user', text, isStreaming: false, isError: false })
+    },
+    [appendMessage],
+  )
 
   /** 스트리밍 중인 동반자 말풍선에 토큰을 잇거나, 없으면 새로 연다 */
   const appendCompanionToken = useCallback((tokenText: string): void => {
@@ -230,6 +244,7 @@ export function useCompanionSession(requestApproval: ApprovalRequester): Compani
     session: connectedSession,
     toolRuntime,
     sendMessage,
+    appendUserMessage,
     interrupt,
   }
 }

@@ -27,9 +27,9 @@ export const IPC_CHANNELS = {
   databaseAll: 'database:all',
   databaseClose: 'database:close',
 
-  // Python 사이드카(+2 발표) — PPTX 파싱·슬라이드 렌더는 메인이 사이드카로 위임
-  sidecarPickPptx: 'sidecar:pick-pptx',
-  sidecarExtractDeck: 'sidecar:extract-deck',
+  // Python 사이드카(+2) — 문서(PPTX·PDF·DOCX·TXT·MD) 파싱·슬라이드 렌더를 메인이 위임
+  sidecarPickDocument: 'sidecar:pick-document',
+  sidecarExtractDocument: 'sidecar:extract-document',
 } as const
 
 export interface PingResult {
@@ -87,9 +87,12 @@ export interface ToolOperationResult {
   rollbackInfo?: string
 }
 
+/** 사이드카가 다룰 수 있는 문서 타입 — renderer/src/presentation/document.ts와 거울 동기 */
+export type SupportedDocumentType = 'pptx' | 'pdf' | 'docx' | 'txt' | 'md'
+
 /**
- * 사이드카 발표 와이어 타입 — renderer/src/presentation/sidecarDeck.ts와 거울 동기.
- * 슬라이드 한 장: 텍스트·노트 + (가능하면) 슬라이드 이미지 data URL. 이미지 없으면 null.
+ * 사이드카 문서 와이어 타입 — renderer/src/presentation/sidecarDocument.ts와 거울 동기.
+ * 구획(슬라이드/페이지/섹션) 한 개: 텍스트·노트 + (PPTX만) 이미지 data URL. 없으면 null.
  */
 export interface SidecarSlide {
   title: string
@@ -99,12 +102,18 @@ export interface SidecarSlide {
 }
 
 /**
- * PPTX 추출 결과:
- * - ok: 슬라이드 추출 성공(렌더는 실패해도 ok — renderNotice로 안내)
+ * 문서 추출 결과:
+ * - ok: 구획 추출 성공(PPTX 렌더는 실패해도 ok — renderNotice로 안내)
  * - unavailable: 사이드카(Python) 자체가 없음/미준비 — 데모 폴백 대상
- * - failed: 사이드카는 있으나 이 파일 파싱에 실패
+ * - failed: 사이드카는 있으나 이 파일 파싱 실패 또는 미지원 형식(HWP 등)
  */
 export type SidecarExtractResult =
-  | { status: 'ok'; sourceName: string; slides: SidecarSlide[]; renderNotice: string | null }
+  | {
+      status: 'ok'
+      sourceName: string
+      docType: SupportedDocumentType
+      slides: SidecarSlide[]
+      renderNotice: string | null
+    }
   | { status: 'unavailable'; message: string }
   | { status: 'failed'; message: string }

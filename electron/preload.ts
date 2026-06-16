@@ -58,15 +58,15 @@ const bridge = {
     },
   },
 
-  /** 발표(+2) — Python 사이드카로 PPTX 파싱·슬라이드 렌더 위임 */
+  /** 문서(+2) — Python 사이드카로 PDF·DOCX·PPTX·TXT·MD 파싱(+PPTX 슬라이드 렌더) 위임 */
   presentation: {
-    /** 네이티브 파일 선택. 취소 시 null */
-    pickPptxFile(): Promise<string | null> {
-      return ipcRenderer.invoke(IPC_CHANNELS.sidecarPickPptx)
+    /** 네이티브 파일 선택(지원 문서 타입). 취소 시 null */
+    pickDocumentFile(): Promise<string | null> {
+      return ipcRenderer.invoke(IPC_CHANNELS.sidecarPickDocument)
     },
-    /** PPTX → 슬라이드 추출. 사이드카 미준비/파싱 실패도 결과 객체로 보고 */
-    extractDeck(pptxPath: string): Promise<SidecarExtractResult> {
-      return ipcRenderer.invoke(IPC_CHANNELS.sidecarExtractDeck, pptxPath)
+    /** 문서 → 구획 추출. 사이드카 미준비/파싱 실패/미지원도 결과 객체로 보고 */
+    extractDocument(documentPath: string): Promise<SidecarExtractResult> {
+      return ipcRenderer.invoke(IPC_CHANNELS.sidecarExtractDocument, documentPath)
     },
   },
 
