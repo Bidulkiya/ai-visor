@@ -129,6 +129,7 @@
   --face-feature-lo: #b7bfcb;
   --face-catchlight: rgba(255, 255, 255, 0.92);
   --face-halo: rgba(127, 179, 163, 0.13); /* 세이지-틸 은은한 아우라(accent) */
+  --face-mouth-cavity: #0a0b0e; /* 발성 시 벌어진 입 안(디스크보다 어두워 깊이) */
 }
 
 * {
@@ -315,6 +316,10 @@ body::after {
 /* 캐치라이트 — 눈빛(생기). 위치·가시성(opacity)은 모델값(ry)으로 렌더가 정함 */
 .face-catchlight {
   fill: var(--face-catchlight);
+}
+/* 발성 시 벌어진 입 안 — 솔리드(필터 없음). ry는 발성 레벨로 렌더가 정함 */
+.face-mouth-cavity {
+  fill: var(--face-mouth-cavity);
 }
 /* 눈썹·입 — 둥근 캡으로 부드럽되 또렷하게 */
 .face-line {

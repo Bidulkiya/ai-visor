@@ -19,6 +19,17 @@ export interface TtsSpeakHandlers {
   onStart(): void
   onEnd(): void
   onError(message: string): void
+  /** 단어/구절 경계(엔진이 지원하면) — 발성 모션의 음절 펄스용. 미지원 엔진은 호출 안 함 */
+  onBoundary?(): void
+}
+
+/**
+ * 발성 활동 싱크 — TTS가 "말하는 중/단어 경계"를 외부(표정 등)에 알리는 통로. ui가 구현 주입.
+ * 출력 스트림(R2)과 별개 채널이다: 출력 스트림은 LLM→소비자 단방향이라 TTS가 거기로 되쏘지 않는다.
+ */
+export interface SpeechActivitySink {
+  setSpeaking(active: boolean): void
+  markBoundary(now: number): void
 }
 
 export interface TtsEngine {
@@ -62,6 +73,7 @@ export function createWebSpeechTtsEngine(language: string = DEFAULT_LANGUAGE): T
         }
       }
       utterance.onstart = () => handlers.onStart()
+      utterance.onboundary = () => handlers.onBoundary?.()
       utterance.onend = settleAsEnd
       utterance.onerror = (event) => {
         // 하드컷(cancel)도 error로 오는 플랫폼이 있다 — 오류가 아니라 '발화 종료'로
@@ -221,6 +233,8 @@ export interface SpeechPlayer {
 export interface SpeechPlayerOptions {
   /** 미지정 시 WebSpeech. 환경에 없으면 재생만 조용히 비활성화된다 */
   engine?: TtsEngine | null
+  /** 발성 모션용 — 말하는 동안/단어 경계를 표정(FaceCanvas)에 전달. 미지정이면 발성 모션 없음 */
+  speechActivity?: SpeechActivitySink
 }
 
 export function createSpeechPlayer(options: SpeechPlayerOptions = {}): SpeechPlayer {
@@ -228,6 +242,8 @@ export function createSpeechPlayer(options: SpeechPlayerOptions = {}): SpeechPla
   if (engine === null) {
     console.error('[voice.tts]: 음성 합성을 지원하지 않는 환경 — 재생 비활성화')
   }
+  // 발성 모션 채널(선택) — 말하는 동안/단어 경계를 표정에 전달. 없으면 발성 모션 미동작
+  const speechActivity = options.speechActivity
 
   let pendingText = ''
   let isPlayerEnabled = true
@@ -267,26 +283,41 @@ export function createSpeechPlayer(options: SpeechPlayerOptions = {}): SpeechPla
       isSpeaking = false
       return true
     }
+    /** 이 발화가 끝났을 때 다음이 없으면 발성 종료를 알린다(입 닫힘). 다음이 있으면 유지(깜빡임 방지) */
+    const settleAndPump = (): void => {
+      if (!settleUtterance()) {
+        return
+      }
+      if (sentenceQueue.length === 0) {
+        speechActivity?.setSpeaking(false)
+      }
+      pumpQueue()
+    }
     engine.speak(nextSentence, {
       onStart: () => {
-        if (generation !== playbackGeneration || hasLoggedFirstByte) {
+        if (generation !== playbackGeneration) {
+          return
+        }
+        // 실제 소리 시작 = 발성 중(입 벌어짐 시작). 발화마다 알린다.
+        speechActivity?.setSpeaking(true)
+        if (hasLoggedFirstByte) {
           return
         }
         hasLoggedFirstByte = true
         const elapsedMs = Math.round(performance.now() - turnStartedAt)
         console.log(`[voice.tts] first-byte: ${elapsedMs}ms (턴 시작 기준)`)
       },
-      onEnd: () => {
-        if (settleUtterance()) {
-          pumpQueue()
+      onBoundary: () => {
+        if (generation !== playbackGeneration) {
+          return
         }
+        speechActivity?.markBoundary(performance.now())
       },
+      onEnd: settleAndPump,
       onError: (message) => {
         console.error('[voice.tts]:', message)
         // 실패한 문장은 건너뛰고 계속 — 한 문장의 오류가 턴 전체 발화를 막지 않게
-        if (settleUtterance()) {
-          pumpQueue()
-        }
+        settleAndPump()
       },
     })
   }
@@ -392,6 +423,8 @@ export function createSpeechPlayer(options: SpeechPlayerOptions = {}): SpeechPla
     // 줄 단위 마크다운 상태도 함께 리셋 — 이전 턴의 코드블록/목록 구간이 새 턴으로 새지 않게
     isInsideCodeBlock = false
     isInListRun = false
+    // 발성 종료 알림 — 끼어들기·음소거·새 턴 시 입도 즉시 닫힌다(4중 취소 정신, CLAUDE.md §5)
+    speechActivity?.setSpeaking(false)
     engine?.cancelAll()
   }
 
@@ -420,6 +453,8 @@ export function createSpeechPlayer(options: SpeechPlayerOptions = {}): SpeechPla
         hardCut()
         return
       case 'emotion':
+      case 'emotion-shift':
+        // 감정 마커는 발화와 무관 — 표정만 쓴다
         return
     }
   }

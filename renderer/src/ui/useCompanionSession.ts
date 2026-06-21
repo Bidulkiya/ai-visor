@@ -158,7 +158,8 @@ export function useCompanionSession(requestApproval: ApprovalRequester): Compani
           appendMessage({ role: 'companion', text: event.message, isStreaming: false, isError: true })
           return
         case 'emotion':
-          // 표정은 FaceCanvas가 같은 스트림을 직접 구독한다
+        case 'emotion-shift':
+          // 표정은 FaceCanvas가 같은 스트림을 직접 구독한다(대화 목록과 무관)
           return
       }
     }

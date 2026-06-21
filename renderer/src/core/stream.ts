@@ -6,8 +6,11 @@
  * expression/voice는 이 스트림을 구독만 할 뿐, core 내부 함수를 직접 부르지 않는다.
  *
  * 한 턴의 이벤트 순서 계약 (발행자 = engine):
- *   turn-start → emotion → token* → (turn-end | turn-interrupted | error)
- * - emotion은 토큰보다 먼저 1회 발행된다 (마커가 답변보다 앞서므로).
+ *   turn-start → emotion → (token | emotion-shift)* → (turn-end | turn-interrupted | error)
+ * - emotion은 토큰보다 먼저 1회 발행된다 (마커가 답변보다 앞서므로). affection·세션 감정은
+ *   이 첫 emotion 1회만 쓴다(턴 단위 회계 불변).
+ * - emotion-shift는 답변 중 구절 단위로 감정이 바뀔 때 토큰과 섞여 0회 이상 발행된다.
+ *   "표정 흐름" 전용이다 — 표정(expression)만 구독해 반영하고, affection·세션·TTS는 무시한다.
  * - turn-interrupted는 끼어들기(푸시투토크) 등으로 턴이 잘렸음을 뜻한다 —
  *   구독자는 진행 중인 재생/렌더를 즉시 멈춰야 한다.
  * - error는 턴의 비정상 종료를 뜻한다.
@@ -20,6 +23,8 @@ import type { VadState } from '../emotion/vad'
 export type OutputEvent =
   | { type: 'turn-start' }
   | { type: 'emotion'; vad: VadState }
+  /** 답변 중 구절별 감정 전환 — 표정 흐름 전용(affection·세션·TTS는 무시). 토큰과 섞여 0+회 */
+  | { type: 'emotion-shift'; vad: VadState }
   | { type: 'token'; text: string }
   | { type: 'turn-end' }
   | { type: 'turn-interrupted' }

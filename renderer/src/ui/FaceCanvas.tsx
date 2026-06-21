@@ -5,20 +5,73 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { OutputStream } from '../core/stream'
 import { createExpressionController, type ExpressionFrame } from '../expression/controller'
+import type { SpeechActivityState } from './speechActivity'
 
 interface FaceCanvasProps {
   stream: OutputStream
+  /** TTS 발성 신호(선택) — 말하는 동안 입이 벌어진다(발성 모션). 없으면 입은 VAD 표정만 따른다 */
+  speechActivity?: SpeechActivityState
 }
 
 /** 창이 가려져 rAF가 멈춰도 이 주기로는 상태(감쇠 등)를 따라간다 */
 const HIDDEN_FALLBACK_TICK_MS = 5000
+/** 발성 모션 — 입 벌어짐 최대치(viewBox 단위). 과하지 않게(차분함 유지) */
+const MOUTH_APERTURE_MAX = 5.5
+/** 발성 레벨 이징 계수(프레임당) — 발성 시작/끝과 진동을 부드럽게 */
+const TALK_EASE = 0.35
+/** 단어 경계 펄스 지속(ms) — 음절 느낌 */
+const BOUNDARY_PULSE_MS = 170
 
-export function FaceCanvas({ stream }: FaceCanvasProps) {
+/**
+ * 발성 레벨(입 벌어짐 0..1)을 한 프레임 갱신한다 — 순수 함수.
+ * 말하는 동안: 기본 진동(늘 움직임) + 단어 경계 펄스(음절 팝). 평소: 0으로 이징(입 닫힘).
+ * 진짜 음량이 아니라 발성 리듬 근사다(WebSpeech는 음량을 노출하지 않음). 표정 매핑과 무관.
+ */
+export function nextTalkLevel(
+  previous: number,
+  activity: SpeechActivityState | undefined,
+  now: number,
+  reducedMotion: boolean,
+): number {
+  let target = 0
+  // 모션 줄이기(prefers-reduced-motion)면 발성 진동을 끈다 — 입은 VAD 표정선만 따른다.
+  // 감정 반영(VAD·emotion-shift)은 기능이라 유지하고, 장식적 발성 진동만 접근성에 맞춰 끈다.
+  if (activity?.speaking === true && !reducedMotion) {
+    const oscillation = 0.32 + 0.28 * (0.5 + 0.5 * Math.sin(now / 75))
+    const sinceBoundary = now - activity.lastBoundaryAt
+    const pulse = sinceBoundary < BOUNDARY_PULSE_MS ? (1 - sinceBoundary / BOUNDARY_PULSE_MS) * 0.3 : 0
+    target = Math.min(1, oscillation + pulse)
+  }
+  return previous + (target - previous) * TALK_EASE
+}
+
+export function FaceCanvas({ stream, speechActivity }: FaceCanvasProps) {
   const [frame, setFrame] = useState<ExpressionFrame | null>(null)
   const [displayedVad, setDisplayedVad] = useState({ valence: 0, arousal: 0 })
+  // 발성 모션 — 매 프레임 이징되는 입 벌어짐(0..1). frame이 이미 매 프레임 리렌더를 일으키므로
+  // 별도 setState 없이 ref로 들고, 렌더에서 읽는다(불필요한 리렌더 방지).
+  const talkLevelRef = useRef(0)
+  // speechActivity는 안정 객체지만, effect 재실행 없이 최신을 읽도록 ref로 감싼다
+  const speechActivityRef = useRef(speechActivity)
+  speechActivityRef.current = speechActivity
+  // 모션 줄이기 선호 — 발성 진동을 끄는 데 쓴다(접근성). 매 프레임 matchMedia 호출을 피해 ref에 캐시.
+  const reducedMotionRef = useRef(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return
+    }
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    reducedMotionRef.current = query.matches
+    const handleChange = (): void => {
+      reducedMotionRef.current = query.matches
+    }
+    query.addEventListener('change', handleChange)
+    return () => query.removeEventListener('change', handleChange)
+  }, [])
 
   useEffect(() => {
     const controller = createExpressionController()
@@ -28,6 +81,14 @@ export function FaceCanvas({ stream }: FaceCanvasProps) {
       setFrame(controller.nextFrame(now))
       const vad = controller.getDisplayedVad()
       setDisplayedVad({ valence: vad.valence, arousal: vad.arousal })
+      // 발성 모션 갱신 — rAF가 매 프레임 불러 부드럽게 진동한다(표정 매핑과 독립).
+      // 모션 줄이기면 진동을 끈다(접근성).
+      talkLevelRef.current = nextTalkLevel(
+        talkLevelRef.current,
+        speechActivityRef.current,
+        now,
+        reducedMotionRef.current,
+      )
     }
 
     // rAF는 창이 가려지면 멈춘다(backgroundThrottling) — 상태 전환(생각 중·감정·
@@ -65,6 +126,8 @@ export function FaceCanvas({ stream }: FaceCanvasProps) {
   // 표정 매핑은 손대지 않는다: 모델이 준 ry를 "그리는 방식"에만 쓴다.
   const eyeOpenFactor = Math.min(1, svg.leftEye.radiusY / 6)
   const catchlightOffsetY = roundToHundredth(svg.leftEye.radiusY * 0.4)
+  // 발성 모션 — 말할 때 입 벌어짐(0이면 닫힘=평소 표정). VAD 입꼬리(곡률)는 그대로 둔다.
+  const mouthApertureRy = roundToHundredth(talkLevelRef.current * MOUTH_APERTURE_MAX)
   return (
     <div className="face-panel">
       <svg
@@ -138,6 +201,15 @@ export function FaceCanvas({ stream }: FaceCanvasProps) {
 
         <path className="face-line" d={svg.leftEyebrowPath} />
         <path className="face-line" d={svg.rightEyebrowPath} />
+        {/* 발성 모션 — 말할 때 벌어지는 입 안(솔리드 다크). ry=0이면 보이지 않아 평소엔 일자 입.
+            입꼬리 곡률(V)은 아래 입선이 그대로 담당 — 벌어짐만 발성에 반응(요구: 둘 공존) */}
+        <ellipse
+          className="face-mouth-cavity"
+          cx="50"
+          cy={roundToHundredth(68 + mouthApertureRy * 0.35)}
+          rx="9"
+          ry={mouthApertureRy}
+        />
         <path className="face-line" d={svg.mouthPath} />
       </svg>
       <p id="face-status" className="face-status" data-mode={mode}>

@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OutputStream } from '../core/stream'
 import { createSpeechCapture, type SpeechCapture } from '../voice/stt'
 import { createSpeechPlayer, type SpeechPlayer } from '../voice/tts'
+import { createSpeechActivity, type SpeechActivityState } from './speechActivity'
 
 export interface VoiceView {
   isCapturing: boolean
@@ -21,6 +22,8 @@ export interface VoiceView {
   startTalk(): void
   stopTalk(): void
   toggleSpeaker(): void
+  /** TTS 발성 신호 — FaceCanvas가 입 발성 모션(벌어짐)에 읽는다(폴링, 표정 매핑과 무관) */
+  speechActivity: SpeechActivityState
 }
 
 export function useVoice(
@@ -35,13 +38,15 @@ export function useVoice(
   const [isCapturing, setIsCapturing] = useState(false)
   const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(true)
   const [voiceNotice, setVoiceNotice] = useState('')
+  // 발성 활동 채널(세션 동안 안정) — TTS가 sink로 쓰고 FaceCanvas가 state를 읽는다
+  const [speechActivity] = useState(() => createSpeechActivity())
 
   // TTS: 스트림 구독자로 부착
   useEffect(() => {
     if (stream === null) {
       return
     }
-    const player = createSpeechPlayer()
+    const player = createSpeechPlayer({ speechActivity: speechActivity.sink })
     playerRef.current = player
     const unsubscribe = player.attachToStream(stream)
     return () => {
@@ -49,7 +54,7 @@ export function useVoice(
       player.cancelAll()
       playerRef.current = null
     }
-  }, [stream])
+  }, [stream, speechActivity])
 
   // STT: 푸시투토크 캡처 (한 번만 생성)
   useEffect(() => {
@@ -110,5 +115,13 @@ export function useVoice(
     setIsSpeakerEnabled(nextEnabled)
   }, [])
 
-  return { isCapturing, isSpeakerEnabled, voiceNotice, startTalk, stopTalk, toggleSpeaker }
+  return {
+    isCapturing,
+    isSpeakerEnabled,
+    voiceNotice,
+    startTalk,
+    stopTalk,
+    toggleSpeaker,
+    speechActivity: speechActivity.state,
+  }
 }

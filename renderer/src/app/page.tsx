@@ -82,7 +82,9 @@ export default function HomePage() {
   return (
     <main className="app-layout">
       <aside className="app-face-column">
-        {session.outputStream !== null && <FaceCanvas stream={session.outputStream} />}
+        {session.outputStream !== null && (
+          <FaceCanvas stream={session.outputStream} speechActivity={voice.speechActivity} />
+        )}
         {session.isFirstRun && session.messages.length === 0 && (
           <p className="app-onboarding">처음 만나는 사이네요. 먼저 인사를 건네 보세요!</p>
         )}

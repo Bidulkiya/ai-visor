@@ -33,6 +33,8 @@ export interface LlmTurnProvider {
 
 export type LlmTurnChunk =
   | { type: 'emotion'; vad: VadState }
+  /** 답변 중 구절별 감정 전환 — 표정 흐름 전용. 토큰과 섞여 0회 이상 */
+  | { type: 'emotion-shift'; vad: VadState }
   | { type: 'token'; text: string }
 
 export type TurnResult =
@@ -92,6 +94,11 @@ export function createConversationEngine(
         }
         hasEmotionPublished = true
         outputStream.publish({ type: 'emotion', vad: chunk.vad })
+        continue
+      }
+      if (chunk.type === 'emotion-shift') {
+        // 구절별 표정 전환 — 토큰 중간에 와도 그대로 흘린다(첫 emotion 계약과 별개, 표정 전용)
+        outputStream.publish({ type: 'emotion-shift', vad: chunk.vad })
         continue
       }
       hasTokenStarted = true

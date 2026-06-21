@@ -210,6 +210,9 @@ export function attachAffectionToOutputStream(
       case 'emotion':
         pendingUserValence = event.vad.valence
         return
+      case 'emotion-shift':
+        // 표정 흐름 전용 — 유대 회계는 턴의 첫 emotion만 쓴다(구절 전환은 무시)
+        return
       case 'turn-end': {
         const turnValence = pendingUserValence
         pendingUserValence = null

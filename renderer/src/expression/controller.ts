@@ -72,6 +72,10 @@ export function transitionOnEvent(state: ExpressionState, event: OutputEvent): E
         displayedVad: smoothVad(state.displayedVad, event.vad),
         isTurnActive: state.isTurnActive,
       }
+    case 'emotion-shift':
+      // 답변 중 구절별 감정 전환 — 기존 emotion과 같은 스무딩 경로로 표정만 흐르게 한다.
+      // 매핑(smoothVad·computeFaceGeometry)은 그대로, 입력(VAD)만 여러 번 들어올 뿐이다.
+      return { ...state, displayedVad: smoothVad(state.displayedVad, event.vad) }
     case 'token':
       // 마커 없이 답변이 시작된 턴도 "생각 중"을 끝낸다
       return { ...state, mode: 'idle' }

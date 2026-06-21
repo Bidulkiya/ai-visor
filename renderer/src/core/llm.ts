@@ -104,10 +104,11 @@ const SYSTEM_PROMPT_BASE = `나는 노아(Noa)다. 사용자의 AI 동반자 —
 - 기억은 제안과 정확도를 높일 뿐이다. 무엇을 실행할지는 사용자의 뜻과 안전 확인을 따른다 — 기억이 많아도 위험한 작업(삭제 등)을 확인 없이 하지 않는다. 어디일지 확실치 않으면 추측해서 실행하지 말고 짧게 확인한다.
 
 [감정 마커 규칙 — 반드시 지킬 것]
-- 답변을 시작하기 전에, 사용자 발화의 말투·단어·맥락에서 읽은 감정을 <vad>V,A,D</vad> 형식으로 정확히 한 번 출력한다.
+- 답변을 시작하기 전에, 사용자 발화의 말투·단어·맥락에서 읽은 감정을 <vad>V,A,D</vad> 형식으로 한 번 출력한다(이번 턴의 기준 감정).
+- 답변 도중 감정이 또렷이 바뀌는 구절(예: 반가운 소식 → 아쉬운 소식)이 있으면, 그 구절 바로 앞에 같은 형식의 마커를 추가로 낼 수 있다. 구절 단위로 드물게(보통 한두 번)만 — 매 문장마다 붙이지 않는다. 감정 흐름이 한결같으면 처음 한 번이면 충분하다.
 - V: 불쾌(-1.0) ~ 쾌(1.0), A: 이완(-1.0) ~ 각성(1.0), D: 위축(-1.0) ~ 주도(1.0). 소수 한 자리 숫자.
 - 마커 뒤에 바로 답변을 이어간다. 마커 외의 JSON·메타데이터·추론 과정은 출력하지 않는다 — 최종 답변만 출력한다.
-예시: <vad>-0.6,0.7,0.3</vad> 무슨 일 있었어요? 목소리가 조금 가라앉아 보여요.`
+예시: <vad>0.5,0.4,0.2</vad> 좋은 소식이 있어요. <vad>-0.3,0.3,0.1</vad> 다만 일부는 잘 안 됐어요.`
 
 /** llm이 시스템 프롬프트에 주입할 기억 — memory 모듈이 채워서 넘긴다 */
 export interface MemoryPromptContext {
@@ -242,8 +243,10 @@ export function buildVolatileSystemText(
 }
 
 export interface MarkerScanResult {
-  /** 마커가 이 호출에서 완성됐을 때만 non-null (스트림당 최대 1회) */
+  /** 턴의 첫 마커가 이 호출에서 완성됐을 때만 non-null (스트림당 최대 1회) — 감정의 기준값 */
   vad: VadState | null
+  /** 첫 마커 이후 답변 중에 온 구절별 마커들(표정 흐름 전용). 보통 0~1개 */
+  shifts: VadState[]
   /** 즉시 하류로 흘릴 본문 텍스트 */
   text: string
 }
@@ -302,9 +305,10 @@ export function createStreamingMarkerScanner(): StreamingMarkerScanner {
     buffer += chunk
     let emittedText = ''
     let emittedVad: VadState | null = null
+    const emittedShifts: VadState[] = []
 
-    // 닫힌 마커를 가능한 만큼 떼어낸다. 첫 유효 마커만 감정이 되고, 이후 마커는
-    // 태그만 조용히 제거한다(텍스트로 새지 않게). 마커 앞 본문(before)은 모두 흘린다.
+    // 닫힌 마커를 가능한 만큼 떼어낸다. 첫 유효 마커는 감정의 기준값(emotion), 이후 유효
+    // 마커는 구절별 표정 전환(shift)으로 모은다. 어느 쪽이든 태그는 텍스트로 새지 않는다.
     for (let marker = extractClosedMarker(); marker !== null; marker = extractClosedMarker()) {
       emittedText += marker.before
       buffer = marker.after
@@ -315,6 +319,8 @@ export function createStreamingMarkerScanner(): StreamingMarkerScanner {
       if (!hasEmittedEmotion) {
         emittedVad = marker.vad
         hasEmittedEmotion = true
+      } else {
+        emittedShifts.push(marker.vad)
       }
     }
 
@@ -324,7 +330,7 @@ export function createStreamingMarkerScanner(): StreamingMarkerScanner {
     if (openIndex !== -1 && buffer.length - openIndex > MAX_MARKER_SCAN_LENGTH) {
       emittedText += buffer
       buffer = ''
-      return { vad: emittedVad, text: emittedText }
+      return { vad: emittedVad, shifts: emittedShifts, text: emittedText }
     }
     const holdFrom = openIndex !== -1 ? openIndex : findPotentialMarkerStart(buffer)
     if (holdFrom === -1) {
@@ -334,7 +340,7 @@ export function createStreamingMarkerScanner(): StreamingMarkerScanner {
       emittedText += buffer.slice(0, holdFrom)
       buffer = buffer.slice(holdFrom)
     }
-    return { vad: emittedVad, text: emittedText }
+    return { vad: emittedVad, shifts: emittedShifts, text: emittedText }
   }
 
   function finish(): void {
@@ -593,6 +599,10 @@ async function* emitChunksFromStream(
     }
     if (result.text !== '') {
       yield { type: 'token', text: result.text }
+    }
+    // 구절별 표정 전환 — 토큰 뒤에 흘려 그 구절이 지나간 뒤 표정이 따라가게(스무딩이 완충)
+    for (const shift of result.shifts) {
+      yield { type: 'emotion-shift', vad: shift }
     }
   }
 }
