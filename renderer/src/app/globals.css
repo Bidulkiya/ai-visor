@@ -10,7 +10,8 @@
  * 성능: 모션·전환은 transform/opacity 위주(60fps). backdrop-filter는 자주 리렌더되는
  *   말풍선이 아니라 '안정적인 패널'에만 쓴다. prefers-reduced-motion이면 모션을 끈다.
  *
- * 표정(face-*) 색은 전용 토큰(--face-*)으로 분리해 기존 모습을 그대로 보존한다(개편 대상 아님).
+ * 표정(face-*)은 전용 토큰(--face-*)으로 분리한다. 시각 표현(다크 톤 입체·발광·아이들 모션)만
+ *   여기서 강화하고, VAD→표정 배선·매핑·blink(expression 모듈)는 건드리지 않는다.
  */
 
 :root {
@@ -117,10 +118,17 @@
   --dur: 220ms;
   --dur-slow: 360ms;
 
-  /* ── 표정 — 기존 모습 보존(개편 대상 아님) ── */
-  --face-fill: #2a2d36;
-  --face-outline: #4a4f5c;
-  --face-line: #e8e9ed;
+  /* ── 표정 — 다크 톤 강화(부드러운 구체 + 은은한 발광). 차분함 유지, 시각 표현만 강화 ── */
+  --face-disc-hi: #313641; /* 위쪽 광원(살짝 밝음) */
+  --face-disc-mid: #232730;
+  --face-disc-lo: #15171c; /* 가장자리(어두워 물러남 → 입체) */
+  --face-rim: rgba(255, 255, 255, 0.12); /* 윗면 림 라이트 */
+  --face-eye-hi: #eef1f5;
+  --face-eye-lo: #c2c8d3;
+  --face-feature-hi: #e9ebef;
+  --face-feature-lo: #b7bfcb;
+  --face-catchlight: rgba(255, 255, 255, 0.92);
+  --face-halo: rgba(127, 179, 163, 0.13); /* 세이지-틸 은은한 아우라(accent) */
 }
 
 * {
@@ -281,25 +289,51 @@ body::after {
 .face-svg {
   width: 224px;
   height: 224px;
-  /* 표정에 아주 옅은 그림자로 입체감(도형 자체는 불변) */
-  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
+  /* 깊이 그림자(블러는 기존 수준 유지 — 매 프레임 재계산 비용을 키우지 않음) + 아주 느린
+     아이들 플로팅으로 "살아있는" 느낌(transform은 GPU 합성, will-change로 60fps 유지) */
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.4));
+  animation: noa-face-float 6.5s var(--ease) infinite;
+  will-change: transform;
 }
 
-.face-outline {
-  fill: var(--face-fill);
-  stroke: var(--face-outline);
-  stroke-width: 1.5;
+/* 색(그라데이션 fill/stroke)은 전부 여기서 — JSX는 구조·동적 좌표만(관심사 분리) */
+.face-halo {
+  fill: url(#noa-halo); /* 다크 배경에서 face가 떠 보이는 은은한 아우라 */
 }
-
+.face-disc {
+  fill: url(#noa-disc); /* 위쪽 광원으로 부드러운 구체감 */
+}
+/* 윗면 림 라이트 — 빛을 받는 가장자리 */
+.face-rim {
+  fill: none;
+  stroke: var(--face-rim);
+  stroke-width: 1;
+}
 .face-eye {
-  fill: var(--face-line);
+  fill: url(#noa-eye);
 }
-
+/* 캐치라이트 — 눈빛(생기). 위치·가시성(opacity)은 모델값(ry)으로 렌더가 정함 */
+.face-catchlight {
+  fill: var(--face-catchlight);
+}
+/* 눈썹·입 — 둥근 캡으로 부드럽되 또렷하게 */
 .face-line {
   fill: none;
-  stroke: var(--face-line);
+  stroke: url(#noa-feature);
   stroke-width: 3;
   stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 아주 미묘한 부유 — 차분함을 깨지 않게 폭을 작게(1.5px) */
+@keyframes noa-face-float {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-1.5px) scale(1.006);
+  }
 }
 
 .face-status {
