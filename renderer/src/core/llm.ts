@@ -225,18 +225,20 @@ function appendMemorySections(sections: string[], memoryContext: MemoryPromptCon
 }
 
 /**
- * 페르소나(고정) + 어투 지시 + 런타임 자기상태 + 기억 섹션으로
- * 시스템 프롬프트를 만든다. 값 조회에 실패한 항목은 줄 단위로 생략된다.
+ * 매 턴 바뀌는 시스템 섹션(어투·현재 VAD·기억)만 만든다 — 순수 함수.
+ * 고정 페르소나(SYSTEM_PROMPT_BASE)는 prompt caching을 위해 캐시 블록으로 따로 둔다
+ * (buildTurnRequest 참조). 어느 값도 없으면 빈 문자열. 값 조회 실패 항목은 줄 단위로 생략.
  */
-export function buildSystemPrompt(
+export function buildVolatileSystemText(
   memoryContext: MemoryPromptContext | null,
   runtimeState: RuntimeStateContext | null,
 ): string {
-  const sections = [SYSTEM_PROMPT_BASE]
+  const sections: string[] = []
   appendToneSection(sections, runtimeState)
   appendCurrentStateSection(sections, runtimeState)
   appendMemorySections(sections, memoryContext)
-  return sections.join('\n')
+  // append*는 앞에 빈 줄(구분자)을 넣으므로 join 후 양끝을 다듬는다
+  return sections.join('\n').trim()
 }
 
 export interface MarkerScanResult {
@@ -462,7 +464,47 @@ function toAnthropicTools(specs: ReadonlyArray<ToolSpec>): Anthropic.Tool[] {
   }))
 }
 
-function buildTurnRequest(
+// ── 도구 정의를 이번 턴에 광고할지 (토큰 절감 + 도구 오인 감소) ──
+// 보수적: 기본은 포함. "명백한 일상 대화"(짧고 도구 신호 0)만 생략한다.
+// 애매하면(길거나 신호 있으면) 포함 — 도구가 필요한데 안 보내는 실수를 피한다.
+
+/** 파일·동작·웹/정보·시스템 신호 — 하나라도 있으면 도구를 보낸다(생략하지 않음) */
+const TOOL_NEED_SIGNALS: readonly string[] = [
+  // 파일·경로
+  '파일', '폴더', '경로', '디렉', '다운로드', '바탕화면', '.txt', '.pdf', '.png', '.jpg', '.zip', '.doc', '.xls',
+  'c:', 'd:', '/users', '\\',
+  // 파일·시스템 동작
+  '열어', '실행', '삭제', '지워', '옮겨', '이동', '복사', '만들', '생성', '저장', '찾아', '검색', '캡처', '스크린샷',
+  '압축', '풀어', '클립보드', '붙여', '알림', '리마인', '예약', '프로세스', '종료', '정리해',
+  '메모', '기록', '적어', '입력', '읽어', // 메모·기록·읽기(write_file·read_file 등) — 짧은 암묵 요청 누락 방지
+  // 웹·최신 정보
+  '웹', 'http', 'url', '링크', '사이트', '뉴스', '날씨', '환율', '주가', '최신', '요즘', '지금', '오늘', '현재', '가격', '시세',
+  // 시스템 상태
+  '배터리', 'cpu', '메모리', '디스크', '시스템',
+]
+
+/** 이 길이 이하 + 도구 신호 없음 = 일상 잡담·게임으로 보고 도구 정의를 생략한다 */
+const CASUAL_NO_TOOL_MAX_CHARS = 24
+
+function hasToolNeedSignal(text: string): boolean {
+  const lowered = text.toLowerCase()
+  return TOOL_NEED_SIGNALS.some((signal) => lowered.includes(signal))
+}
+
+/**
+ * 이번 턴에 도구 정의를 LLM에 보낼지 결정 — 순수 함수.
+ * 기본 포함. 도구 신호가 전혀 없는 짧은 발화(인사·끝말잇기·짧은 반응)만 생략한다.
+ * 캐싱과의 관계: 작업 턴은 [도구+페르소나]가, 일상 턴은 [페르소나]가 각자 캐시된다 —
+ * 도구 유무로 prefix가 갈리지만 각 모드 안에서는 캐시가 적중한다.
+ */
+export function shouldOfferTools(text: string): boolean {
+  if (hasToolNeedSignal(text)) {
+    return true
+  }
+  return text.trim().length > CASUAL_NO_TOOL_MAX_CHARS
+}
+
+export function buildTurnRequest(
   config: ClaudeProviderConfig,
   memoryContext: MemoryPromptContext | null,
   runtimeState: RuntimeStateContext | null,
@@ -470,13 +512,25 @@ function buildTurnRequest(
   messages: Anthropic.MessageParam[],
   includeTools: boolean,
 ): Anthropic.MessageStreamParams {
+  // prompt caching: 매 턴 안 바뀌는 prefix를 앞에 두고 cache_control로 캐시한다(입력 토큰 비용↓).
+  // 렌더 순서는 tools → system → messages 이므로, 고정 페르소나(규칙 포함) 블록에 마커를 달면
+  // 그 앞의 도구 정의까지 함께 캐시된다. 변동분(어투·VAD·기억)은 마커 뒤 블록으로 분리해
+  // 캐시 무효화 없이 매 턴 바뀌게 한다. 캐시 미달(최소 길이 미만)이어도 조용히 무시되어 안전.
+  const systemBlocks: Anthropic.TextBlockParam[] = [
+    { type: 'text', text: SYSTEM_PROMPT_BASE, cache_control: { type: 'ephemeral' } },
+  ]
+  const volatileText = buildVolatileSystemText(memoryContext, runtimeState)
+  if (volatileText.length > 0) {
+    systemBlocks.push({ type: 'text', text: volatileText })
+  }
   const request: Anthropic.MessageStreamParams = {
     model,
     max_tokens: config.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-    system: buildSystemPrompt(memoryContext, runtimeState),
+    system: systemBlocks,
     messages,
   }
-  // 라운드 상한 마무리 요약은 도구 없이 호출 — LLM이 더 못 부르고 텍스트로 정리하게
+  // 라운드 상한 마무리 요약은 도구 없이 호출(includeTools=false) — LLM이 더 못 부르고 텍스트로 정리하게.
+  // 일상 대화도 호출부에서 includeTools=false로 와 도구 정의를 통째로 생략한다(토큰↓·오인↓).
   if (includeTools && config.toolRuntime !== undefined && config.toolRuntime.specs.length > 0) {
     request.tools = toAnthropicTools(config.toolRuntime.specs)
   }
@@ -584,12 +638,19 @@ export function createClaudeTurnProvider(config: ClaudeProviderConfig): LlmTurnP
         message.text,
       )
       console.log(`[llm] history: ${(conversation.length - 1) / 2}턴 주입 (보유 ${recentTurns.length}턴)`)
+      // 이번 턴에 도구 정의를 광고할지 한 번 정한다(라운드마다 같게 — 캐시 prefix 안정 + 체인 일관).
+      // 일상 대화면 도구를 통째로 생략(토큰↓·오인↓). 그러면 stop_reason은 tool_use가 안 나와
+      // 1라운드로 끝난다. config에 toolRuntime이 없으면 어차피 도구가 없다.
+      const offerTools = config.toolRuntime !== undefined && shouldOfferTools(message.text)
+      if (config.toolRuntime !== undefined) {
+        console.log(`[tools] ${offerTools ? '도구 포함' : '도구 생략(일상 대화)'} — "${message.text.slice(0, 24)}"`)
+      }
       // 작업이 LLM의 최종 답변(도구 없는 응답)으로 끝났는가 — 거짓이면 라운드 상한 도달
       let completedWithoutTools = false
       try {
         for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
           const stream = client.messages.stream(
-            buildTurnRequest(config, memoryContext, runtimeState, model, conversation, true),
+            buildTurnRequest(config, memoryContext, runtimeState, model, conversation, offerTools),
             { signal },
           )
           yield* emitChunksFromStream(stream, scanner, signal, logFirstTokenOnce)
