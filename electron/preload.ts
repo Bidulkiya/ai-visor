@@ -8,6 +8,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC_CHANNELS,
+  type McpCallResult,
+  type McpConnectResult,
+  type McpServerConfig,
   type PingResult,
   type SidecarExtractResult,
   type SqlParameters,
@@ -55,6 +58,16 @@ const bridge = {
   tools: {
     runOperation(name: string, input: Record<string, unknown>): Promise<ToolOperationResult> {
       return ipcRenderer.invoke(IPC_CHANNELS.toolOperation, name, input)
+    },
+  },
+
+  /** MCP(외부 서버) — 연결·도구목록·도구호출. 게이트·감사·인젝션 경계는 렌더러 tools/mcp.ts */
+  mcp: {
+    connect(configs: McpServerConfig[]): Promise<McpConnectResult> {
+      return ipcRenderer.invoke(IPC_CHANNELS.mcpConnect, configs)
+    },
+    callTool(serverId: string, toolName: string, input: Record<string, unknown>): Promise<McpCallResult> {
+      return ipcRenderer.invoke(IPC_CHANNELS.mcpCallTool, serverId, toolName, input)
     },
   },
 

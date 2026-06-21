@@ -805,6 +805,9 @@ body::after {
   transform: translate(-50%, -50%);
   width: 420px;
   max-width: calc(100vw - 32px);
+  /* MCP 섹션이 추가돼 길어질 수 있으므로 화면을 넘으면 내부 스크롤 */
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   padding: var(--sp-6);
   border-radius: var(--radius-card);
   border: 1px solid var(--glass-border);
@@ -893,6 +896,105 @@ body::after {
   word-break: break-word;
   max-height: 180px;
   overflow-y: auto;
+}
+
+/* ── MCP 서버 설정 ── */
+.settings-section-divider {
+  height: 1px;
+  margin: var(--sp-5) 0 var(--sp-4);
+  background: var(--border);
+}
+
+.settings-subtitle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  color: var(--text);
+}
+
+.mcp-server-list {
+  list-style: none;
+  margin: var(--sp-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.mcp-server-empty {
+  font-size: var(--fs-small);
+  color: var(--text-faint);
+  padding: var(--sp-2) 0;
+}
+
+.mcp-server-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+}
+
+.mcp-server-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.mcp-server-label {
+  font-size: var(--fs-small);
+  font-weight: 550;
+  color: var(--text);
+}
+
+.mcp-server-status {
+  font-size: var(--fs-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}
+
+.mcp-status-connected {
+  color: #5fb98e;
+}
+
+.mcp-status-error {
+  color: var(--danger);
+}
+
+.mcp-status-disabled,
+.mcp-status-pending {
+  color: var(--text-faint);
+}
+
+.mcp-server-command {
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.mcp-server-actions {
+  display: flex;
+  gap: var(--sp-2);
+  justify-content: flex-end;
+}
+
+.chat-button-small {
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-small);
+}
+
+.mcp-add-form {
+  margin-top: var(--sp-4);
 }
 
 /* 공통 등장 모션 — 작은 요소가 부드럽게 떠오른다 */

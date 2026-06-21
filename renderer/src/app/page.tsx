@@ -140,6 +140,8 @@ export default function HomePage() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         onApiKeyChanged={session.refreshApiKeyStatus}
+        mcpStatuses={session.mcpStatuses}
+        onReconnectMcp={session.reconnectMcp}
       />
 
       <ApprovalDialog pending={approval.pending} onApprove={approval.approve} onDeny={approval.deny} />

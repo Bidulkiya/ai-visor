@@ -30,6 +30,14 @@ export const IPC_CHANNELS = {
   // Python 사이드카(+2) — 문서(PPTX·PDF·DOCX·TXT·MD) 파싱·슬라이드 렌더를 메인이 위임
   sidecarPickDocument: 'sidecar:pick-document',
   sidecarExtractDocument: 'sidecar:extract-document',
+
+  /**
+   * MCP(Model Context Protocol) — 노아가 외부 MCP 서버의 호스트(클라이언트)가 된다.
+   * 트랜스포트(stdio 자식 프로세스)·네트워크는 메인에서만 (R4 보조, §5 자식 프로세스 관리).
+   * 게이트·감사·redact는 렌더러 tools/가 담당 — 여기는 연결·도구목록·도구호출만.
+   */
+  mcpConnect: 'mcp:connect',
+  mcpCallTool: 'mcp:call-tool',
 } as const
 
 export interface PingResult {
@@ -89,6 +97,60 @@ export interface ToolOperationResult {
 
 /** 사이드카가 다룰 수 있는 문서 타입 — renderer/src/presentation/document.ts와 거울 동기 */
 export type SupportedDocumentType = 'pptx' | 'pdf' | 'docx' | 'txt' | 'md'
+
+// ── MCP 와이어 타입 — renderer/src/ui/mcpSettings.ts·tools/mcp.ts와 거울 동기 ──
+
+/**
+ * MCP 서버 연결 설정 — 사용자가 설정 UI에서 지정(서버 경로/명령).
+ * stdio 트랜스포트: command + args를 셸 없이 직접 실행한다(인젝션 차단).
+ */
+export interface McpServerConfig {
+  /** 안정적 식별자 — 도구 네임스페이스(mcp__<id>__<tool>)에 쓰인다. [a-zA-Z0-9_-]만 */
+  id: string
+  /** 사람이 읽는 이름(상태 표시용) */
+  label: string
+  /** 실행 명령(예: 'npx', 'node', 'python') */
+  command: string
+  /** 명령 인자(예: ['-y', '@modelcontextprotocol/server-filesystem', 'C:\\docs']) */
+  args: string[]
+  /** 꺼두면 연결을 시도하지 않는다 */
+  enabled: boolean
+}
+
+/**
+ * MCP 서버가 노출하는 도구 하나 — tools/list 결과를 와이어로 옮긴 것.
+ * annotations는 서버의 자기申告다 — 위험도를 '올리는' 보조 신호로만 쓰고,
+ * 게이트를 '낮추는' 근거로는 쓰지 않는다(신뢰 경계 — renderer/src/tools/mcp.ts).
+ */
+export interface McpToolDescriptor {
+  serverId: string
+  /** MCP 서버 기준 원래 도구 이름(tools/call에 그대로 보낸다) */
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+  annotations?: {
+    readOnlyHint?: boolean
+    destructiveHint?: boolean
+  }
+}
+
+/** 서버별 연결 결과 — 실패해도 throw하지 않고 상태로 보고(graceful, 노아 기본 기능 보존) */
+export type McpServerConnectionStatus =
+  | { id: string; label: string; status: 'connected'; toolCount: number }
+  | { id: string; label: string; status: 'error'; message: string }
+  | { id: string; label: string; status: 'disabled' }
+
+export interface McpConnectResult {
+  servers: McpServerConnectionStatus[]
+  /** 연결된 모든 서버의 도구를 합친 목록(렌더러가 레지스트리에 등록) */
+  tools: McpToolDescriptor[]
+}
+
+/** MCP 도구 호출 결과 — 실패도 결과 객체로(LLM이 인지). 출력 상한·정제는 렌더러가 추가 적용 */
+export interface McpCallResult {
+  isSuccess: boolean
+  output: string
+}
 
 /**
  * 사이드카 문서 와이어 타입 — renderer/src/presentation/sidecarDocument.ts와 거울 동기.

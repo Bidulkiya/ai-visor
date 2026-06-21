@@ -34,6 +34,8 @@ export interface ToolDefinition {
 
 export interface ToolRegistry {
   register(tool: ToolDefinition): void
+  /** 등록 해제 — 있었으면 true. MCP 도구의 재연결(동적 갱신) 시 묵은 도구를 비운다 */
+  unregister(name: string): boolean
   get(name: string): ToolDefinition | null
   list(): readonly ToolDefinition[]
 }
@@ -48,6 +50,9 @@ export function createToolRegistry(): ToolRegistry {
         throw new Error(`이미 등록된 도구입니다: ${tool.name}`)
       }
       toolsByName.set(tool.name, tool)
+    },
+    unregister(name: string): boolean {
+      return toolsByName.delete(name)
     },
     get(name: string): ToolDefinition | null {
       return toolsByName.get(name) ?? null

@@ -18,7 +18,9 @@ import {
 import type { OutputEvent, OutputStream } from '../core/stream'
 import { getStoredApiKey } from './apiKeySettings'
 import type { ApprovalRequester } from '../tools/gate'
-import { assembleToolRuntime } from './assembleToolRuntime'
+import { assembleToolRuntime, type ToolAssembly } from './assembleToolRuntime'
+import type { McpServerConnectionStatus } from '../tools/mcp'
+import { loadMcpServerConfigs } from './mcpSettings'
 
 export interface ChatMessage {
   id: number
@@ -44,6 +46,10 @@ export interface CompanionSessionView {
   session: CompanionSession | null
   /** 게이트·감사(R4)가 조립된 도구 런타임 — 발표 사전 조사 등이 재사용 */
   toolRuntime: ToolRuntime | null
+  /** MCP 서버 연결 상태(설정 UI 표시용). 연결 안 돼도 노아 기본 기능은 정상 (요구 ④) */
+  mcpStatuses: readonly McpServerConnectionStatus[]
+  /** 설정 변경 후 현재 설정을 다시 읽어 MCP 서버를 재연결한다 */
+  reconnectMcp(): Promise<void>
   /** 채팅 입력과 음성 입력 모두 이 관문으로 — source만 다르다 (R1) */
   sendMessage(text: string, source?: 'chat' | 'voice'): Promise<void>
   /**
@@ -59,15 +65,31 @@ export interface CompanionSessionView {
 let connectionPromise: Promise<ConnectSessionResult> | null = null
 /** 첫 연결에 실제로 쓰인 런타임 — 발표 사전 조사도 같은 게이트·감사 경로를 쓰게 한다 */
 let connectedToolRuntime: ToolRuntime | null = null
-function getOrConnectSession(toolRuntime: ToolRuntime | null): Promise<ConnectSessionResult> {
+/** 첫 연결에 쓰인 조립체 — MCP 연결도 같은 레지스트리(같은 게이트·감사)에 붙게 한다 */
+let connectedAssembly: ToolAssembly | null = null
+function getOrConnectSession(assembly: ToolAssembly | null): Promise<ConnectSessionResult> {
   if (connectionPromise === null) {
-    connectedToolRuntime = toolRuntime
+    connectedAssembly = assembly
+    connectedToolRuntime = assembly?.runtime ?? null
     connectionPromise = connectCompanionSession({
       getApiKey: getStoredApiKey,
-      toolRuntime: toolRuntime ?? undefined,
+      toolRuntime: assembly?.runtime,
     })
   }
   return connectionPromise
+}
+
+// MCP 연결도 한 번만 시작한다(StrictMode 이중 effect 안전) — 두 effect가 같은 약속을
+// 기다리고, 살아있는 쪽이 상태를 반영한다. 재연결(설정 변경)은 이 약속을 교체한다.
+let mcpConnectPromise: Promise<readonly McpServerConnectionStatus[]> | null = null
+function getOrConnectMcp(): Promise<readonly McpServerConnectionStatus[]> {
+  if (mcpConnectPromise === null) {
+    mcpConnectPromise =
+      connectedAssembly === null
+        ? Promise.resolve([])
+        : connectedAssembly.connectMcpServers(loadMcpServerConfigs())
+  }
+  return mcpConnectPromise
 }
 
 export function useCompanionSession(requestApproval: ApprovalRequester): CompanionSessionView {
@@ -83,6 +105,7 @@ export function useCompanionSession(requestApproval: ApprovalRequester): Compani
   const [outputStream, setOutputStream] = useState<OutputStream | null>(null)
   const [connectedSession, setConnectedSession] = useState<CompanionSession | null>(null)
   const [toolRuntime, setToolRuntime] = useState<ToolRuntime | null>(null)
+  const [mcpStatuses, setMcpStatuses] = useState<readonly McpServerConnectionStatus[]>([])
 
   /** 현재 스트리밍 중인 동반자 말풍선 id — 토큰이 이어 붙을 대상 */
   const streamingMessageIdRef = useRef<number | null>(null)
@@ -166,10 +189,10 @@ export function useCompanionSession(requestApproval: ApprovalRequester): Compani
 
     // 승인자는 ref로 감싸 안정 — 도구 런타임은 첫 연결 때 한 번만 조립된다
     // signal까지 forward — 끼어들기 시 대기 중 승인이 자동 거부되게 (체인 즉시 중단)
-    const toolRuntime = assembleToolRuntime((request, signal) =>
+    const assembly = assembleToolRuntime((request, signal) =>
       requestApprovalRef.current(request, signal),
     )
-    getOrConnectSession(toolRuntime)
+    getOrConnectSession(assembly)
       .then((result) => {
         if (isCancelled) {
           return
@@ -186,6 +209,17 @@ export function useCompanionSession(requestApproval: ApprovalRequester): Compani
         setToolRuntime(connectedToolRuntime)
         unsubscribe = result.session.outputStream.subscribe(handleStreamEvent)
         setConnectionState('connected')
+        // 세션이 붙은 뒤 MCP 서버를 비동기로 연결한다(노아 기본 기능은 이미 동작 — graceful).
+        // 실패해도 대화·빌트인 도구는 정상. 상태는 설정 UI 표시용.
+        getOrConnectMcp()
+          .then((statuses) => {
+            if (!isCancelled) {
+              setMcpStatuses(statuses)
+            }
+          })
+          .catch((error: unknown) => {
+            console.error('[useCompanionSession]: MCP 연결 실패 — MCP 없이 진행:', error)
+          })
       })
       .catch((error: unknown) => {
         console.error('[useCompanionSession]: 세션 연결 실패:', error)
@@ -234,6 +268,27 @@ export function useCompanionSession(requestApproval: ApprovalRequester): Compani
     setHasApiKey(getStoredApiKey() !== null)
   }, [])
 
+  // 설정에서 서버를 추가/제거/토글한 뒤 호출 — 현재 설정을 다시 읽어 재연결하고 상태 갱신.
+  // 조립체가 없으면(브라우저 단독) 아무 일도 하지 않는다(graceful).
+  const reconnectMcp = useCallback(async (): Promise<void> => {
+    if (connectedAssembly === null) {
+      return
+    }
+    const promise = connectedAssembly.connectMcpServers(loadMcpServerConfigs())
+    mcpConnectPromise = promise
+    try {
+      const statuses = await promise
+      // 연속 재연결이 순서 어긋나게 끝나도 오래된 결과로 덮어쓰지 않는다(최신 약속만 반영)
+      if (mcpConnectPromise === promise) {
+        setMcpStatuses(statuses)
+      }
+    } catch (error) {
+      if (mcpConnectPromise === promise) {
+        console.error('[useCompanionSession]: MCP 재연결 실패:', error)
+      }
+    }
+  }, [])
+
   return {
     connectionState,
     isFirstRun,
@@ -244,6 +299,8 @@ export function useCompanionSession(requestApproval: ApprovalRequester): Compani
     outputStream,
     session: connectedSession,
     toolRuntime,
+    mcpStatuses,
+    reconnectMcp,
     sendMessage,
     appendUserMessage,
     interrupt,

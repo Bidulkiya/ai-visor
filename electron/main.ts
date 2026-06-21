@@ -10,6 +10,8 @@ import { IPC_CHANNELS, type PingResult } from './ipc/channels'
 import { registerSqliteDriverHost } from './db/sqliteDriverHost'
 import { registerToolHost } from './tools/toolHost'
 import { registerSidecarHost } from './sidecar/sidecarHost'
+import { registerMcpHost } from './mcp/mcpHost'
+import type { McpManager } from './mcp/manager'
 
 const RENDERER_DEV_URL = 'http://localhost:3000'
 const RENDERER_SCHEME = 'app'
@@ -52,6 +54,9 @@ function registerRendererProtocol(): void {
   })
 }
 
+/** MCP 매니저 — 종료 시 자식 프로세스를 정리하기 위해 핸들을 들고 있는다(좀비 방지 §5) */
+let mcpManager: McpManager | null = null
+
 function registerIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.ping, (): PingResult => {
     return { isAlive: true, electronVersion: process.versions.electron }
@@ -59,6 +64,7 @@ function registerIpcHandlers(): void {
   registerSqliteDriverHost()
   registerToolHost()
   registerSidecarHost()
+  mcpManager = registerMcpHost()
 }
 
 /**
@@ -131,6 +137,11 @@ app
   .catch((error: unknown) => {
     console.error('[app.whenReady]: 초기화 실패', error)
   })
+
+// 종료 직전 MCP 자식 프로세스를 정리한다 — 비동기 영속(렌더러)과 별개의 동기 정리(좀비 방지 §5)
+app.on('before-quit', () => {
+  mcpManager?.disconnectAll()
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

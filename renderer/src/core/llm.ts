@@ -491,6 +491,12 @@ const TOOL_NEED_SIGNALS: readonly string[] = [
 
 /** 이 길이 이하 + 도구 신호 없음 = 일상 잡담·게임으로 보고 도구 정의를 생략한다 */
 const CASUAL_NO_TOOL_MAX_CHARS = 24
+/**
+ * MCP 도구 이름 접두 — renderer/src/tools/mcp.ts의 네임스페이스(mcp__<서버>__<도구>)와
+ * 거울 동기. core는 tools를 import할 수 없으므로(§2 경계) 접두 문자열만 둔다.
+ * "MCP 도구가 등록돼 있는가"를 specs 이름으로 판별하는 데 쓴다.
+ */
+const MCP_TOOL_NAME_PREFIX = 'mcp__'
 
 function hasToolNeedSignal(text: string): boolean {
   const lowered = text.toLowerCase()
@@ -502,8 +508,16 @@ function hasToolNeedSignal(text: string): boolean {
  * 기본 포함. 도구 신호가 전혀 없는 짧은 발화(인사·끝말잇기·짧은 반응)만 생략한다.
  * 캐싱과의 관계: 작업 턴은 [도구+페르소나]가, 일상 턴은 [페르소나]가 각자 캐시된다 —
  * 도구 유무로 prefix가 갈리지만 각 모드 안에서는 캐시가 적중한다.
+ *
+ * 예외: MCP 도구가 있으면(외부 서버 연결) 짧은 발화도 도구를 광고한다. MCP 도구의
+ * 도메인은 빌트인 키워드 신호로 못 잡으므로("내 노트 봐줘"), 생략하면 짧은 MCP 요청을
+ * 놓친다. MCP 미연결 시엔 기존 절감을 그대로 유지한다(평소 비용 영향 0). 캐싱 측면에서도
+ * MCP 연결 시엔 매 턴 [도구+페르소나]로 prefix가 오히려 안정된다(모드 분기가 사라짐).
  */
-export function shouldOfferTools(text: string): boolean {
+export function shouldOfferTools(text: string, hasMcpTools: boolean): boolean {
+  if (hasMcpTools) {
+    return true
+  }
   if (hasToolNeedSignal(text)) {
     return true
   }
@@ -651,7 +665,13 @@ export function createClaudeTurnProvider(config: ClaudeProviderConfig): LlmTurnP
       // 이번 턴에 도구 정의를 광고할지 한 번 정한다(라운드마다 같게 — 캐시 prefix 안정 + 체인 일관).
       // 일상 대화면 도구를 통째로 생략(토큰↓·오인↓). 그러면 stop_reason은 tool_use가 안 나와
       // 1라운드로 끝난다. config에 toolRuntime이 없으면 어차피 도구가 없다.
-      const offerTools = config.toolRuntime !== undefined && shouldOfferTools(message.text)
+      // MCP 도구(외부 서버)가 등록돼 있으면 짧은 요청도 도구를 광고한다(키워드로 못 잡는
+      // MCP 도메인 요청 누락 방지). MCP 미연결이면 hasMcpTools=false라 기존 절감 유지.
+      const hasMcpTools =
+        config.toolRuntime !== undefined &&
+        config.toolRuntime.specs.some((spec) => spec.name.startsWith(MCP_TOOL_NAME_PREFIX))
+      const offerTools =
+        config.toolRuntime !== undefined && shouldOfferTools(message.text, hasMcpTools)
       if (config.toolRuntime !== undefined) {
         console.log(`[tools] ${offerTools ? '도구 포함' : '도구 생략(일상 대화)'} — "${message.text.slice(0, 24)}"`)
       }
@@ -713,8 +733,11 @@ export function createClaudeTurnProvider(config: ClaudeProviderConfig): LlmTurnP
 // ── 종료 시 기억 영속용 단발 호출 (memory가 주입받는 요약기·사실추출기 구현) ──
 
 function formatTranscript(turns: readonly ConversationTurn[]): string {
+  // 종료 시 요약·사실추출 전사본도 라이브 턴(buildConversationFromHistory)과 동일하게
+  // redact한다 (R7 — 원문 대화에 섞인 시크릿이 외부 API로 새지 않게). 로컬 저장·표시는
+  // 원문 그대로고, 외부 경계에서만 가린다. 이미 redact된 입력(세션 사실 추출)엔 무해(멱등).
   return turns
-    .map((turn) => `사용자: ${turn.userText}\n동반자: ${turn.assistantText}`)
+    .map((turn) => `사용자: ${redactSecrets(turn.userText)}\n동반자: ${redactSecrets(turn.assistantText)}`)
     .join('\n')
 }
 
